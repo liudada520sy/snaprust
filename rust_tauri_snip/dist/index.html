@@ -1,0 +1,1833 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnapRust - 跨平台截图与标注工作台 (Rust + Tauri + Web Canvas)</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; user-select: none; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      overflow: hidden;
+    }
+    .font-mono-code {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .checkerboard {
+      background-color: #0f172a;
+      background-image:
+        linear-gradient(45deg, #1e293b 25%, transparent 25%),
+        linear-gradient(-45deg, #1e293b 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #1e293b 75%),
+        linear-gradient(-45deg, transparent 75%, #1e293b 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    }
+    .tool-btn {
+      transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .tool-btn.active {
+      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(249, 115, 22, 0.35);
+      border-color: #fb923c;
+    }
+    .color-dot {
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .color-dot.active {
+      transform: scale(1.22);
+      box-shadow: 0 0 0 2px #0f172a, 0 0 0 4px #f8fafc;
+    }
+    /* Custom Scrollbar for code drawer */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col select-none">
+
+  <!-- Top Navigation & Capture Bar -->
+  <header class="h-14 bg-slate-900/95 border-b border-slate-800 px-3 sm:px-5 flex items-center justify-between gap-2 shrink-0 z-30">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" class="hidden"/>
+          <rect x="3" y="3" width="18" height="18" rx="3" stroke-dasharray="4 2" />
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-sm sm:text-base tracking-tight text-white">SnapRust</span>
+          <span id="runtimeBadge" class="text-[11px] font-mono-code px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+            Web Canvas 预览模式
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-400 hidden sm:block">Rust <code class="text-orange-400">screenshots</code> 抓屏引擎 + Tauri 2.0 + HTML5 Canvas 标注画板</p>
+      </div>
+    </div>
+
+    <!-- Capture Source Controls -->
+    <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+      <!-- Monitor Selector (Populated by Tauri get_monitors or simulated displays) -->
+      <div class="flex items-center bg-slate-800/90 border border-slate-700/80 rounded-lg px-2 py-1 text-xs">
+        <svg class="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
+        </svg>
+        <select id="monitorSelect" class="bg-transparent text-slate-200 focus:outline-none text-xs cursor-pointer pr-1">
+          <option value="0">主显示器 #1 (1920×1080 @100%)</option>
+          <option value="1">副显示器 #2 (2560×1440 @125%)</option>
+        </select>
+      </div>
+
+      <label class="hidden md:flex items-center gap-1.5 text-xs text-slate-300 bg-slate-800/60 border border-slate-700/60 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-slate-800">
+        <input id="hideWindowToggle" type="checkbox" checked class="accent-orange-500 rounded cursor-pointer" />
+        <span>抓屏时隐藏自身窗口</span>
+      </label>
+
+      <!-- Main Capture Trigger -->
+      <button id="btnCaptureScreen" type="button" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-400 hover:to-amber-500 text-white font-medium text-xs sm:text-sm shadow-md shadow-orange-500/20 active:scale-95 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+          <circle cx="12" cy="13" r="3"/>
+        </svg>
+        <span>立即抓屏</span>
+      </button>
+
+      <!-- Switch Simulated Scene / Upload Local Image -->
+      <button id="btnSwitchScene" type="button" class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs transition" title="切换仿真桌面背景以测试标注与打码">
+        <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        <span class="hidden sm:inline">换示例屏幕</span>
+      </button>
+
+      <label for="fileUploadInput" class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs cursor-pointer transition" title="导入本地图片进行裁剪与标注">
+        <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <span class="hidden md:inline">导入图片</span>
+        <input id="fileUploadInput" type="file" accept="image/*" class="hidden" />
+      </label>
+
+      <!-- View Switcher: Canvas Workspace vs Rust+Tauri Source Code -->
+      <div class="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 ml-1">
+        <button id="tabWorkspaceBtn" type="button" class="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 text-white transition">
+          画板工作台
+        </button>
+        <button id="tabSourceCodeBtn" type="button" class="px-2.5 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition flex items-center gap-1">
+          <svg class="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+          </svg>
+          <span>Rust+Tauri 源码</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace View -->
+  <main id="workspaceView" class="flex-1 flex flex-col relative overflow-hidden">
+
+    <!-- Secondary Floating Annotation Toolbar -->
+    <div class="bg-slate-900/95 border-b border-slate-800/90 px-3 py-2 flex flex-wrap items-center justify-between gap-2 z-20 shadow-md">
+      <!-- Primary Annotation Tools -->
+      <div class="flex items-center gap-1 flex-wrap">
+        <button data-tool="crop" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="框选截图区域 (快捷键: C)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 2v14a2 2 0 002 2h14M18 22V8a2 2 0 00-2-2H2"/>
+          </svg>
+          <span>区域框选</span>
+        </button>
+
+        <button data-tool="rect" type="button" class="tool-btn active px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="矩形标注 (快捷键: R)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="5" width="18" height="14" rx="2"/>
+          </svg>
+          <span>矩形</span>
+        </button>
+
+        <button data-tool="arrow" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="箭头指向标注 (快捷键: A)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 19L19 5m0 0v10m0-10H9"/>
+          </svg>
+          <span>箭头</span>
+        </button>
+
+        <button data-tool="mosaic" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="马赛克隐私打码 (快捷键: M)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="6" height="6"/><rect x="9" y="9" width="6" height="6"/><rect x="15" y="3" width="6" height="6"/><rect x="3" y="15" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/>
+          </svg>
+          <span>马赛克</span>
+        </button>
+
+        <button data-tool="text" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="文字批注 (快捷键: T)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M12 6v13m-4 0h8"/>
+          </svg>
+          <span>文字</span>
+        </button>
+
+        <button data-tool="pen" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="自由画笔涂鸦 (快捷键: P)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+          </svg>
+          <span>画笔</span>
+        </button>
+
+        <button data-tool="step" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="点击添加递增步骤序号 ① ② ③ (快捷键: S)">
+          <span class="w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">1</span>
+          <span>序号标尺</span>
+        </button>
+
+        <button data-tool="picker" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="像素级放大镜取色器 (快捷键: I)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+          </svg>
+          <span>取色</span>
+        </button>
+      </div>
+
+      <!-- Tool Sub-Options (Color, Stroke Width, Fill / Mosaic Mode) -->
+      <div class="flex items-center gap-3 flex-wrap">
+        <!-- Color Palette -->
+        <div id="colorPaletteGroup" class="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
+          <button type="button" data-color="#ef4444" class="color-dot active w-4 h-4 rounded-full bg-red-500" title="警示红 #ef4444"></button>
+          <button type="button" data-color="#f97316" class="color-dot w-4 h-4 rounded-full bg-orange-500" title="活力橙 #f97316"></button>
+          <button type="button" data-color="#eab308" class="color-dot w-4 h-4 rounded-full bg-yellow-500" title="高亮黄 #eab308"></button>
+          <button type="button" data-color="#22c55e" class="color-dot w-4 h-4 rounded-full bg-green-500" title="翠绿 #22c55e"></button>
+          <button type="button" data-color="#06b6d4" class="color-dot w-4 h-4 rounded-full bg-cyan-500" title="科技青 #06b6d4"></button>
+          <button type="button" data-color="#a855f7" class="color-dot w-4 h-4 rounded-full bg-purple-500" title="极光紫 #a855f7"></button>
+          <button type="button" data-color="#ffffff" class="color-dot w-4 h-4 rounded-full bg-white" title="纯白 #ffffff"></button>
+          <input id="customColorInput" type="color" value="#ef4444" class="w-5 h-5 bg-transparent cursor-pointer border-0 p-0 ml-0.5" title="自定义任意颜色" />
+        </div>
+
+        <!-- Size / Thickness / Mosaic Block Size Slider -->
+        <div class="flex items-center gap-2 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800 text-xs">
+          <span id="sizeSliderLabel" class="text-slate-400">粗细</span>
+          <input id="strokeSizeInput" type="range" min="2" max="24" value="4" class="w-20 accent-orange-500 cursor-pointer" />
+          <span id="strokeSizeValue" class="font-mono-code text-orange-400 w-7 text-right">4px</span>
+        </div>
+
+        <!-- Dynamic Context Sub-Mode Toggle -->
+        <button id="subModeToggleBtn" type="button" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 transition">
+          模式: 空心边框
+        </button>
+
+        <!-- Crop Action Buttons (Shown when crop selection exists) -->
+        <div id="cropActionGroup" class="hidden items-center gap-1.5">
+          <button id="btnApplyCrop" type="button" class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1 shadow">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+            </svg>
+            <span>裁剪选区</span>
+          </button>
+          <button id="btnCancelCrop" type="button" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">
+            取消选区
+          </button>
+        </div>
+      </div>
+
+      <!-- History & Export Actions -->
+      <div class="flex items-center gap-1.5">
+        <button id="btnUndo" type="button" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 disabled:opacity-40 transition" title="撤销上一步 (Ctrl+Z)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+          </svg>
+        </button>
+        <button id="btnRedo" type="button" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 disabled:opacity-40 transition" title="重做 (Ctrl+Y)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"/>
+          </svg>
+        </button>
+        <button id="btnClearAll" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/80 hover:text-rose-300 hover:border-rose-700/60 text-slate-300 border border-slate-700 text-xs transition" title="清空所有标注并恢复原图">
+          重置
+        </button>
+
+        <div class="h-4 w-px bg-slate-800 mx-0.5"></div>
+
+        <button id="btnCopyClipboard" type="button" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium flex items-center gap-1.5 shadow-sm transition" title="复制到系统剪贴板 (Ctrl+C)">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+          </svg>
+          <span>复制图像</span>
+        </button>
+
+        <button id="btnExportPng" type="button" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1.5 shadow-sm transition" title="保存 PNG 到本地 (Ctrl+S)">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          <span>保存 PNG</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Interactive Dual-Layer Canvas Stage -->
+    <div id="canvasViewport" class="flex-1 checkerboard relative overflow-auto flex items-center justify-center p-4">
+      <div id="canvasWrapper" class="relative shadow-2xl shadow-black/80 border border-slate-700/70 bg-slate-950">
+        <!-- Main Persistent Bitmap Canvas -->
+        <canvas id="mainCanvas" width="1120" height="630" class="block max-w-full h-auto"></canvas>
+        <!-- Interactive Overlay Canvas (Active shape preview, crop mask, color loupe) -->
+        <canvas id="overlayCanvas" width="1120" height="630" class="absolute inset-0 pointer-events-auto cursor-crosshair w-full h-full"></canvas>
+
+        <!-- Floating WYSIWYG Text Annotation Box (Replaces browser prompt()) -->
+        <div id="floatingTextEditor" class="hidden absolute z-30 bg-slate-900/95 border-2 border-orange-500 rounded-xl p-2 shadow-2xl min-w-[240px]">
+          <div class="flex items-center justify-between text-[11px] text-slate-400 mb-1 px-1">
+            <span>输入批注文字 (按 Enter 确认，Esc 取消)</span>
+            <label class="flex items-center gap-1 cursor-pointer text-slate-300">
+              <input id="textBgFillToggle" type="checkbox" checked class="accent-orange-500" />
+              <span>深色底衬</span>
+            </label>
+          </div>
+          <input id="floatingTextInput" type="text" placeholder="在此输入文字批注..." class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-orange-400" />
+          <div class="flex justify-end gap-1.5 mt-2">
+            <button id="btnCancelText" type="button" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">取消</button>
+            <button id="btnConfirmText" type="button" class="px-3 py-1 rounded bg-orange-500 hover:bg-orange-400 text-xs font-medium text-white">添加文字</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Status & Telemetry Bar -->
+    <footer class="h-8 bg-slate-950 border-t border-slate-800/90 px-4 flex items-center justify-between text-[11px] text-slate-400 shrink-0">
+      <div class="flex items-center gap-4">
+        <span id="statusToolHint" class="text-slate-300 font-medium">当前工具：矩形标注 — 在画布上按住鼠标左键拖拽绘制</span>
+        <span id="statusSelectionInfo" class="font-mono-code text-amber-400 hidden">选区: 0 × 0 px</span>
+      </div>
+      <div class="flex items-center gap-4 font-mono-code">
+        <span id="statusColorPreview" class="flex items-center gap-1.5">
+          <span id="pickedColorSwatch" class="w-3 h-3 rounded-sm bg-red-500 inline-block border border-white/30"></span>
+          <span id="pickedColorHex">#EF4444</span>
+        </span>
+        <span id="statusCursorCoords">X: 0, Y: 0</span>
+        <span id="statusCanvasDim">1120 × 630 px</span>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Rust + Tauri Source Code & Architecture View (Hidden by default) -->
+  <section id="sourceCodeView" class="hidden flex-1 overflow-y-auto bg-slate-950 p-4 sm:p-6">
+    <div class="max-w-5xl mx-auto space-y-6">
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">
+            <span>Rust (`screenshots` + `arboard`) + Tauri 2.0 完整跨平台工程源码</span>
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">
+            底层使用 Rust <code class="text-orange-400">screenshots</code> 库直接捕获各系统帧缓冲（支持 Windows DXGI/GDI、macOS CGDisplay、Linux X11/Wayland PipeWire），上层复用当前 HTML5 Canvas 标注画板。
+          </p>
+        </div>
+        <button id="btnBackToCanvas" type="button" class="px-3.5 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-xs font-semibold shrink-0 transition">
+          返回画板工作台
+        </button>
+      </div>
+
+      <!-- Code Tabs -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div class="border-b border-slate-800 px-4 py-2.5 flex items-center justify-between flex-wrap gap-2 bg-slate-950/60">
+          <div class="flex items-center gap-1.5">
+            <button data-codefile="main_rs" type="button" class="code-tab-btn px-3 py-1.5 rounded-lg text-xs font-mono-code bg-orange-500/20 text-orange-300 border border-orange-500/40">
+              src-tauri/src/main.rs
+            </button>
+            <button data-codefile="cargo_toml" type="button" class="code-tab-btn px-3 py-1.5 rounded-lg text-xs font-mono-code text-slate-400 hover:text-white">
+              src-tauri/Cargo.toml
+            </button>
+            <button data-codefile="tauri_conf" type="button" class="code-tab-btn px-3 py-1.5 rounded-lg text-xs font-mono-code text-slate-400 hover:text-white">
+              src-tauri/tauri.conf.json
+            </button>
+            <button data-codefile="workflow_yml" type="button" class="code-tab-btn px-3 py-1.5 rounded-lg text-xs font-mono-code text-emerald-400 hover:text-white">
+              .github/workflows/build.yml (云端自动编译)
+            </button>
+          </div>
+          <button id="btnCopyCodeSnippet" type="button" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700">
+            复制当前源码
+          </button>
+        </div>
+        <pre id="codeDisplayArea" class="p-4 text-xs font-mono-code text-slate-200 overflow-x-auto leading-relaxed max-h-[460px] select-text"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Toast Notification -->
+  <div id="toastBanner" class="fixed bottom-12 right-5 z-50 pointer-events-none opacity-0 translate-y-2 transition-all duration-200 bg-slate-900/95 border border-slate-700 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs">
+    <span id="toastDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+    <span id="toastText">操作成功</span>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. Embedded Rust + Tauri Source Files for In-App Inspection
+    // =========================================================================
+    const RUST_PROJECT_FILES = {
+      main_rs: `// src-tauri/src/main.rs
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use arboard::{Clipboard, ImageData};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use image::ImageFormat;
+use screenshots::Screen;
+use serde::Serialize;
+use std::borrow::Cow;
+use std::fs;
+use std::io::Cursor;
+use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
+use tauri::Window;
+
+#[derive(Serialize)]
+pub struct MonitorInfo {
+    pub id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f32,
+    pub is_primary: bool,
+}
+
+#[derive(Serialize)]
+pub struct CaptureResult {
+    pub width: u32,
+    pub height: u32,
+    pub base64_png: String,
+    pub monitor_id: u32,
+}
+
+#[tauri::command]
+fn get_monitors() -> Result<Vec<MonitorInfo>, String> {
+    let screens = Screen::all().map_err(|e| format!("无法枚举显示器: {}", e))?;
+    Ok(screens.into_iter().map(|s| {
+        let info = s.display_info;
+        MonitorInfo {
+            id: info.id, x: info.x, y: info.y,
+            width: info.width, height: info.height,
+            scale_factor: info.scale_factor, is_primary: info.is_primary,
+        }
+    }).collect())
+}
+
+#[tauri::command]
+async fn capture_screen(window: Window, monitor_id: Option<u32>, hide_window: bool) -> Result<CaptureResult, String> {
+    if hide_window {
+        let _ = window.hide();
+        thread::sleep(Duration::from_millis(220));
+    }
+    let screens = Screen::all().map_err(|e| format!("获取屏幕列表失败: {}", e))?;
+    let target = match monitor_id {
+        Some(id) => screens.into_iter().find(|s| s.display_info.id == id),
+        None => screens.into_iter().find(|s| s.display_info.is_primary),
+    }.ok_or_else(|| "未找到目标显示器".to_string())?;
+
+    let captured = target.capture().map_err(|e| format!("屏幕捕获失败: {}", e))?;
+    let (width, height) = (captured.width(), captured.height());
+
+    let mut png_bytes: Vec<u8> = Vec::new();
+    captured.write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+        .map_err(|e| format!("PNG 编码失败: {}", e))?;
+
+    if hide_window {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    Ok(CaptureResult {
+        width, height,
+        base64_png: format!("data:image/png;base64,{}", BASE64.encode(&png_bytes)),
+        monitor_id: target.display_info.id,
+    })
+}
+
+#[tauri::command]
+fn copy_image_to_clipboard(base64_png: String) -> Result<(), String> {
+    let raw_b64 = base64_png.strip_prefix("data:image/png;base64,").unwrap_or(&base64_png);
+    let bytes = BASE64.decode(raw_b64).map_err(|e| e.to_string())?;
+    let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?.into_rgba8();
+    let (width, height) = img.dimensions();
+    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set_image(ImageData {
+        width: width as usize,
+        height: height as usize,
+        bytes: Cow::from(img.into_raw()),
+    }).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_image_to_disk(base64_png: String, file_path: String) -> Result<String, String> {
+    let raw_b64 = base64_png.strip_prefix("data:image/png;base64,").unwrap_or(&base64_png);
+    let bytes = BASE64.decode(raw_b64).map_err(|e| e.to_string())?;
+    let path = PathBuf::from(&file_path);
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn main() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            get_monitors, capture_screen, copy_image_to_clipboard, save_image_to_disk
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}`,
+      cargo_toml: `[package]
+name = "rust-tauri-snip"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+screenshots = "0.8.10"
+image = "0.25"
+base64 = "0.22"
+arboard = "3.4"`,
+      workflow_yml: `name: Build SnapRust Desktop Binaries
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            artifact_name: SnapRust-Windows-x64
+            bundle_path: |
+              src-tauri/target/release/rust-tauri-snip.exe
+              src-tauri/target/release/bundle/msi/*.msi
+              src-tauri/target/release/bundle/nsis/*.exe
+          - platform: macos-latest
+            artifact_name: SnapRust-macOS-Universal
+            bundle_path: |
+              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/release/bundle/macos/*.app
+          - platform: ubuntu-22.04
+            artifact_name: SnapRust-Linux-x64
+            bundle_path: |
+              src-tauri/target/release/bundle/deb/*.deb
+              src-tauri/target/release/bundle/appimage/*.AppImage
+
+    runs-on: \${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libxcb1-dev libxrandr-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - name: Build Tauri Desktop App
+        run: |
+          cargo install tauri-cli --version "^1.5.0" --locked
+          cargo tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: \${{ matrix.artifact_name }}
+          path: \${{ matrix.bundle_path }}`,
+      tauri_conf: `{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SnapRust",
+  "version": "0.1.0",
+  "identifier": "com.snaprust.screenshot",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "SnapRust - 跨平台截图与标注工具",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "center": true
+      }
+    ]
+  }
+}`
+    };
+
+    // =========================================================================
+    // 2. Application State & Tauri Bridge Detection
+    // =========================================================================
+    const mainCanvas = document.getElementById('mainCanvas');
+    const mainCtx = mainCanvas.getContext('2d', { willReadFrequently: true });
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+
+    const state = {
+      isTauri: Boolean(window.__TAURI__ || window.__TAURI_INTERNALS__),
+      currentTool: 'rect', // 'crop' | 'rect' | 'arrow' | 'mosaic' | 'text' | 'pen' | 'step' | 'picker'
+      color: '#ef4444',
+      strokeSize: 4,
+      rectFilled: false,
+      mosaicBrushMode: true, // true = 涂抹画笔, false = 矩形区域马赛克
+      stepCounter: 1,
+      isDrawing: false,
+      startX: 0,
+      startY: 0,
+      currX: 0,
+      currY: 0,
+      cropRect: null, // { x, y, w, h }
+      pendingTextPos: null,
+      history: [],
+      redoStack: [],
+      sceneIndex: 0,
+      activeCodeTab: 'main_rs'
+    };
+
+    // Detect Tauri IPC invoke helper
+    function tauriInvoke(cmd, args = {}) {
+      if (window.__TAURI__) {
+        if (typeof window.__TAURI__.invoke === 'function') {
+          return window.__TAURI__.invoke(cmd, args);
+        }
+        if (window.__TAURI__.tauri && typeof window.__TAURI__.tauri.invoke === 'function') {
+          return window.__TAURI__.tauri.invoke(cmd, args);
+        }
+        if (window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+          return window.__TAURI__.core.invoke(cmd, args);
+        }
+      }
+      if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+        return window.__TAURI_INTERNALS__.invoke(cmd, args);
+      }
+      return Promise.reject(new Error('Not running inside Tauri shell'));
+    }
+
+    function showToast(msg, type = 'success') {
+      const banner = document.getElementById('toastBanner');
+      const dot = document.getElementById('toastDot');
+      const text = document.getElementById('toastText');
+      text.textContent = msg;
+      dot.className = 'w-2.5 h-2.5 rounded-full ' + (
+        type === 'error' ? 'bg-rose-500' : type === 'info' ? 'bg-sky-400' : 'bg-emerald-400'
+      );
+      banner.classList.remove('opacity-0', 'translate-y-2');
+      banner.classList.add('opacity-100', 'translate-y-0');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => {
+        banner.classList.add('opacity-0', 'translate-y-2');
+        banner.classList.remove('opacity-100', 'translate-y-0');
+      }, 2600);
+    }
+
+    // =========================================================================
+    // 3. Simulated Desktop Scenes (For Immediate Testing & Demo in Canvas)
+    // =========================================================================
+    function renderSimulatedDesktop(sceneIdx) {
+      const w = mainCanvas.width;
+      const h = mainCanvas.height;
+      mainCtx.save();
+
+      if (sceneIdx % 2 === 0) {
+        // Scene 1: Modern Developer IDE + System Performance Dashboard + Sensitive Token Card
+        const bgGrad = mainCtx.createLinearGradient(0, 0, w, h);
+        bgGrad.addColorStop(0, '#0f172a');
+        bgGrad.addColorStop(0.5, '#1e1b4b');
+        bgGrad.addColorStop(1, '#090d16');
+        mainCtx.fillStyle = bgGrad;
+        mainCtx.fillRect(0, 0, w, h);
+
+        // Top OS Menu Bar
+        mainCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        mainCtx.fillRect(0, 0, w, 28);
+        mainCtx.fillStyle = '#94a3b8';
+        mainCtx.font = '600 12px Inter, sans-serif';
+        mainCtx.fillText('SnapRust OS   File   Edit   Selection   View   Window   Help', 16, 18);
+        mainCtx.fillText('100%  Wi-Fi  Mon 14:32', w - 155, 18);
+
+        // Window 1: Code Editor Window
+        drawRoundedRect(mainCtx, 48, 54, 620, 490, 12, '#0b1120', '#334155');
+        mainCtx.fillStyle = '#1e293b';
+        mainCtx.fillRect(49, 55, 618, 34);
+        // Window Traffic Lights
+        [['#ef4444', 68], ['#f59e0b', 86], ['#22c55e', 104]].forEach(([c, cx]) => {
+          mainCtx.beginPath();
+          mainCtx.arc(cx, 72, 5.5, 0, Math.PI * 2);
+          mainCtx.fillStyle = c;
+          mainCtx.fill();
+        });
+        mainCtx.fillStyle = '#cbd5e1';
+        mainCtx.font = '500 12px JetBrains Mono, monospace';
+        mainCtx.fillText('src-tauri/src/main.rs — rust-tauri-snip', 235, 76);
+
+        const codeLines = [
+          ['1', '#[tauri::command]', '#f97316'],
+          ['2', 'async fn capture_screen(monitor_id: Option<u32>) -> Result<CaptureResult, String> {', '#e2e8f0'],
+          ['3', '    let screens = screenshots::Screen::all().map_err(|e| e.to_string())?;', '#93c5fd'],
+          ['4', '    let target = screens.into_iter().next().ok_or("No screen")?;', '#93c5fd'],
+          ['5', '    let image = target.capture().map_err(|e| e.to_string())?;', '#34d399'],
+          ['6', '    // 隐私密钥示例 (可用马赛克工具涂抹打码测试):', '#64748b'],
+          ['7', '    let api_secret = "sk-live-98a7f6b5c4d3e2f1-SECRET-KEY";', '#fca5a5'],
+          ['8', '    let account_id = "user_admin@internal.corp.example";', '#fcd34d'],
+          ['9', '    Ok(encode_png_base64(image))', '#c4b5fd'],
+          ['10', '}', '#e2e8f0']
+        ];
+        codeLines.forEach(([num, code, col], idx) => {
+          const y = 122 + idx * 28;
+          mainCtx.fillStyle = '#475569';
+          mainCtx.font = '12px JetBrains Mono, monospace';
+          mainCtx.fillText(num, 66, y);
+          mainCtx.fillStyle = col;
+          mainCtx.fillText(code, 96, y);
+        });
+
+        // Terminal Pane inside Editor
+        mainCtx.fillStyle = '#070b14';
+        mainCtx.fillRect(49, 410, 618, 133);
+        mainCtx.fillStyle = '#38bdf8';
+        mainCtx.font = '600 12px JetBrains Mono, monospace';
+        mainCtx.fillText('$ cargo tauri build --release', 68, 438);
+        mainCtx.fillStyle = '#a7f3d0';
+        mainCtx.font = '12px JetBrains Mono, monospace';
+        mainCtx.fillText('✓ Compiling screenshots v0.8.10 (Cross-platform display capture)', 68, 464);
+        mainCtx.fillText('✓ Compiling arboard v3.4.0 (Native OS clipboard integration)', 68, 488);
+        mainCtx.fillStyle = '#fde047';
+        mainCtx.fillText('✓ Finished release [optimized] target(s) in 4.18s (Binary size: 4.8 MB)', 68, 514);
+
+        // Window 2: Analytics & Bug Report Card on Right
+        drawRoundedRect(mainCtx, 700, 74, 376, 460, 12, '#111827', '#374151');
+        mainCtx.fillStyle = '#f8fafc';
+        mainCtx.font = '700 15px Inter, sans-serif';
+        mainCtx.fillText('跨平台抓屏性能监控面板', 724, 112);
+        mainCtx.fillStyle = '#94a3b8';
+        mainCtx.font = '12px Inter, sans-serif';
+        mainCtx.fillText('试用上方【矩形】【箭头】【马赛克】【文字】工具在此标注', 724, 134);
+
+        // Metric boxes
+        const metrics = [
+          ['抓屏耗时 (1080p)', '11.4 ms', '#22c55e'],
+          ['内存占用 (Rust)', '18.2 MB', '#38bdf8'],
+          ['安装包体积', '4.8 MB', '#f97316']
+        ];
+        metrics.forEach(([label, val, c], i) => {
+          const bx = 722 + i * 114;
+          drawRoundedRect(mainCtx, bx, 154, 104, 74, 8, '#1e293b', '#334155');
+          mainCtx.fillStyle = '#94a3b8';
+          mainCtx.font = '11px Inter, sans-serif';
+          mainCtx.fillText(label, bx + 10, 178);
+          mainCtx.fillStyle = c;
+          mainCtx.font = '700 16px JetBrains Mono, monospace';
+          mainCtx.fillText(val, bx + 10, 208);
+        });
+
+        // Simulated Chart Bars
+        drawRoundedRect(mainCtx, 722, 248, 332, 160, 10, '#0f172a', '#1e293b');
+        mainCtx.fillStyle = '#cbd5e1';
+        mainCtx.font = '600 12px Inter, sans-serif';
+        mainCtx.fillText('各平台帧缓冲捕获帧率 (FPS)', 738, 274);
+        const bars = [
+          ['Windows DXGI', 0.92, '#38bdf8'],
+          ['macOS Quartz', 0.88, '#a855f7'],
+          ['Linux X11/Wayland', 0.85, '#22c55e']
+        ];
+        bars.forEach(([name, ratio, col], idx) => {
+          const by = 296 + idx * 34;
+          mainCtx.fillStyle = '#94a3b8';
+          mainCtx.font = '11px Inter, sans-serif';
+          mainCtx.fillText(name, 738, by + 12);
+          mainCtx.fillStyle = '#1e293b';
+          mainCtx.fillRect(855, by, 180, 14);
+          mainCtx.fillStyle = col;
+          mainCtx.fillRect(855, by, Math.round(180 * ratio), 14);
+        });
+
+        // Sensitive Customer Info Box for Mosaic testing
+        drawRoundedRect(mainCtx, 722, 424, 332, 90, 10, '#1e1b4b', '#4338ca');
+        mainCtx.fillStyle = '#e0e7ff';
+        mainCtx.font = '600 12px Inter, sans-serif';
+        mainCtx.fillText('隐私信息测试区 (用【马赛克】涂抹下方内容)', 736, 448);
+        mainCtx.fillStyle = '#fda4af';
+        mainCtx.font = '12px JetBrains Mono, monospace';
+        mainCtx.fillText('手机号: 138-0013-8899 | 验证码: 849201', 736, 472);
+        mainCtx.fillText('内网 IP: 192.168.42.108:8080', 736, 494);
+      } else {
+        // Scene 2: Light UI Product Prototype & Map Dashboard
+        const bgGrad = mainCtx.createLinearGradient(0, 0, w, h);
+        bgGrad.addColorStop(0, '#e0f2fe');
+        bgGrad.addColorStop(1, '#fef3c7');
+        mainCtx.fillStyle = bgGrad;
+        mainCtx.fillRect(0, 0, w, h);
+
+        drawRoundedRect(mainCtx, 70, 50, 980, 530, 16, '#ffffff', '#cbd5e1');
+        mainCtx.fillStyle = '#0f172a';
+        mainCtx.font = '700 20px Inter, sans-serif';
+        mainCtx.fillText('订单与物流核验中心 — UI 走查标注示例屏', 105, 98);
+        mainCtx.fillStyle = '#64748b';
+        mainCtx.font = '13px Inter, sans-serif';
+        mainCtx.fillText('可使用【区域框选】裁剪任意局部，或使用【序号标尺】与【箭头】标记 UI 问题', 105, 122);
+
+        const cards = [
+          ['待发货订单', '1,284 单', '#0284c7', '#e0f2fe'],
+          ['干线运输中', '6,492 单', '#d97706', '#fef3c7'],
+          ['今日已签收', '19,830 单', '#16a34a', '#dcfce7']
+        ];
+        cards.forEach(([title, count, fg, bg], i) => {
+          const cx = 105 + i * 305;
+          drawRoundedRect(mainCtx, cx, 148, 280, 110, 12, bg, fg);
+          mainCtx.fillStyle = '#334155';
+          mainCtx.font = '600 14px Inter, sans-serif';
+          mainCtx.fillText(title, cx + 20, 182);
+          mainCtx.fillStyle = fg;
+          mainCtx.font = '700 28px JetBrains Mono, monospace';
+          mainCtx.fillText(count, cx + 20, 228);
+        });
+
+        // Table rows
+        drawRoundedRect(mainCtx, 105, 285, 890, 260, 12, '#f8fafc', '#e2e8f0');
+        const rows = [
+          ['运单号', '收件人 (测试打码)', '目的地网点', '当前状态'],
+          ['SN-20261026-001', '张伟 (139-8877-6655)', '上海浦东转运中心', '已装车发往下一站'],
+          ['SN-20261026-002', '李晓明 (186-2233-4455)', '深圳南山科技园营业部', '派件员派送中'],
+          ['SN-20261026-003', '王芳 (150-1122-3344)', '杭州西湖文三路网点', '客户已签收']
+        ];
+        rows.forEach((r, idx) => {
+          const ry = 325 + idx * 52;
+          if (idx > 0) {
+            mainCtx.strokeStyle = '#e2e8f0';
+            mainCtx.beginPath();
+            mainCtx.moveTo(125, ry - 28);
+            mainCtx.lineTo(975, ry - 28);
+            mainCtx.stroke();
+          }
+          mainCtx.fillStyle = idx === 0 ? '#475569' : '#0f172a';
+          mainCtx.font = (idx === 0 ? '700 ' : '500 ') + '13px Inter, sans-serif';
+          mainCtx.fillText(r[0], 130, ry);
+          mainCtx.fillText(r[1], 320, ry);
+          mainCtx.fillText(r[2], 560, ry);
+          mainCtx.fillStyle = idx === 0 ? '#475569' : '#0284c7';
+          mainCtx.fillText(r[3], 790, ry);
+        });
+      }
+
+      mainCtx.restore();
+      updateCanvasDimensionLabel();
+    }
+
+    function drawRoundedRect(ctx, x, y, w, h, r, fill, stroke) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+
+    // =========================================================================
+    // 4. Undo / Redo History Management
+    // =========================================================================
+    function pushHistory() {
+      const snap = mainCtx.getImageData(0, 0, mainCanvas.width, mainCanvas.height);
+      state.history.push({
+        width: mainCanvas.width,
+        height: mainCanvas.height,
+        imageData: snap,
+        stepCounter: state.stepCounter
+      });
+      if (state.history.length > 30) state.history.shift();
+      state.redoStack = [];
+      updateHistoryButtons();
+    }
+
+    function restoreSnapshot(entry) {
+      mainCanvas.width = entry.width;
+      mainCanvas.height = entry.height;
+      overlayCanvas.width = entry.width;
+      overlayCanvas.height = entry.height;
+      mainCtx.putImageData(entry.imageData, 0, 0);
+      state.stepCounter = entry.stepCounter;
+      clearCropSelection();
+      updateCanvasDimensionLabel();
+    }
+
+    function undoAction() {
+      if (state.history.length <= 1) {
+        showToast('已经是最初状态', 'info');
+        return;
+      }
+      const current = state.history.pop();
+      state.redoStack.push(current);
+      const prev = state.history[state.history.length - 1];
+      restoreSnapshot(prev);
+      updateHistoryButtons();
+      showToast('已撤销上一步操作', 'info');
+    }
+
+    function redoAction() {
+      if (state.redoStack.length === 0) return;
+      const next = state.redoStack.pop();
+      state.history.push(next);
+      restoreSnapshot(next);
+      updateHistoryButtons();
+      showToast('已重做操作', 'info');
+    }
+
+    function updateHistoryButtons() {
+      document.getElementById('btnUndo').disabled = state.history.length <= 1;
+      document.getElementById('btnRedo').disabled = state.redoStack.length === 0;
+    }
+
+    function updateCanvasDimensionLabel() {
+      document.getElementById('statusCanvasDim').textContent = `${mainCanvas.width} × ${mainCanvas.height} px`;
+    }
+
+    // =========================================================================
+    // 5. Drawing Algorithms (Rectangle, Arrow, Real Pixel Mosaic, Pen, Step, Text)
+    // =========================================================================
+    function getCanvasCoordinates(evt) {
+      const rect = overlayCanvas.getBoundingClientRect();
+      const scaleX = overlayCanvas.width / rect.width;
+      const scaleY = overlayCanvas.height / rect.height;
+      const clientX = evt.touches && evt.touches[0] ? evt.touches[0].clientX : evt.clientX;
+      const clientY = evt.touches && evt.touches[0] ? evt.touches[0].clientY : evt.clientY;
+      return {
+        x: Math.max(0, Math.min(overlayCanvas.width, Math.round((clientX - rect.left) * scaleX))),
+        y: Math.max(0, Math.min(overlayCanvas.height, Math.round((clientY - rect.top) * scaleY)))
+      };
+    }
+
+    function drawRectAnnotation(ctx, x1, y1, x2, y2, color, lineWidth, filled) {
+      const rx = Math.min(x1, x2);
+      const ry = Math.min(y1, y2);
+      const rw = Math.abs(x2 - x1);
+      const rh = Math.abs(y2 - y1);
+      if (rw < 2 || rh < 2) return;
+
+      ctx.save();
+      if (filled) {
+        ctx.fillStyle = hexToRgba(color, 0.22);
+        ctx.fillRect(rx, ry, rw, rh);
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(0,0,0,0.35)';
+      ctx.shadowBlur = 4;
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.restore();
+    }
+
+    function drawArrowAnnotation(ctx, x1, y1, x2, y2, color, lineWidth) {
+      const dist = Math.hypot(x2 - x1, y2 - y1);
+      if (dist < 6) return;
+
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      const headLength = Math.max(14, lineWidth * 3.8);
+      const headAngle = Math.PI / 6.5;
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(0,0,0,0.4)';
+      ctx.shadowBlur = 4;
+
+      // Shaft line ending slightly inside the arrow head so the tip stays sharp
+      const shaftEndX = x2 - Math.cos(angle) * (headLength * 0.65);
+      const shaftEndY = y2 - Math.sin(angle) * (headLength * 0.65);
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(shaftEndX, shaftEndY);
+      ctx.stroke();
+
+      // Arrowhead polygon
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(
+        x2 - headLength * Math.cos(angle - headAngle),
+        y2 - headLength * Math.sin(angle - headAngle)
+      );
+      ctx.lineTo(
+        x2 - headLength * 0.72 * Math.cos(angle),
+        y2 - headLength * 0.72 * Math.sin(angle)
+      );
+      ctx.lineTo(
+        x2 - headLength * Math.cos(angle + headAngle),
+        y2 - headLength * Math.sin(angle + headAngle)
+      );
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Real Pixelation Mosaic on Rectangular Area of mainCanvas
+    function pixelateRegionOnMainCanvas(x, y, w, h, blockSize) {
+      const bx = Math.max(0, Math.floor(Math.min(x, x + w)));
+      const by = Math.max(0, Math.floor(Math.min(y, y + h)));
+      const bw = Math.min(mainCanvas.width - bx, Math.ceil(Math.abs(w)));
+      const bh = Math.min(mainCanvas.height - by, Math.ceil(Math.abs(h)));
+      if (bw <= 1 || bh <= 1) return;
+
+      const cell = Math.max(6, blockSize);
+      const imgData = mainCtx.getImageData(bx, by, bw, bh);
+      const data = imgData.data;
+
+      for (let py = 0; py < bh; py += cell) {
+        for (let px = 0; px < bw; px += cell) {
+          let rSum = 0, gSum = 0, bSum = 0, count = 0;
+          const maxDy = Math.min(cell, bh - py);
+          const maxDx = Math.min(cell, bw - px);
+
+          for (let dy = 0; dy < maxDy; dy++) {
+            for (let dx = 0; dx < maxDx; dx++) {
+              const idx = ((py + dy) * bw + (px + dx)) * 4;
+              rSum += data[idx];
+              gSum += data[idx + 1];
+              bSum += data[idx + 2];
+              count++;
+            }
+          }
+
+          const rAvg = Math.round(rSum / count);
+          const gAvg = Math.round(gSum / count);
+          const bAvg = Math.round(bSum / count);
+
+          for (let dy = 0; dy < maxDy; dy++) {
+            for (let dx = 0; dx < maxDx; dx++) {
+              const idx = ((py + dy) * bw + (px + dx)) * 4;
+              data[idx] = rAvg;
+              data[idx + 1] = gAvg;
+              data[idx + 2] = bAvg;
+              data[idx + 3] = 255;
+            }
+          }
+        }
+      }
+      mainCtx.putImageData(imgData, bx, by);
+    }
+
+    function drawStepBadge(ctx, x, y, number, color, sizeScale) {
+      const radius = Math.max(12, 10 + sizeScale * 0.9);
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.45)';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = (color.toLowerCase() === '#ffffff' || color.toLowerCase() === '#eab308') ? '#0f172a' : '#ffffff';
+      ctx.font = `700 ${Math.round(radius * 1.05)}px Inter, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(number), x, y + 1);
+      ctx.restore();
+    }
+
+    function drawCropOverlay(rect) {
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      if (!rect || rect.w < 4 || rect.h < 4) return;
+
+      overlayCtx.save();
+      // Dim outside area
+      overlayCtx.fillStyle = 'rgba(2, 6, 23, 0.62)';
+      overlayCtx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      overlayCtx.clearRect(rect.x, rect.y, rect.w, rect.h);
+
+      // Dashed orange border
+      overlayCtx.strokeStyle = '#f97316';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+      // Rule of thirds subtle lines
+      overlayCtx.strokeStyle = 'rgba(249, 115, 22, 0.28)';
+      overlayCtx.lineWidth = 1;
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(rect.x + rect.w / 3, rect.y);
+      overlayCtx.lineTo(rect.x + rect.w / 3, rect.y + rect.h);
+      overlayCtx.moveTo(rect.x + (rect.w * 2) / 3, rect.y);
+      overlayCtx.lineTo(rect.x + (rect.w * 2) / 3, rect.y + rect.h);
+      overlayCtx.moveTo(rect.x, rect.y + rect.h / 3);
+      overlayCtx.lineTo(rect.x + rect.w, rect.y + rect.h / 3);
+      overlayCtx.moveTo(rect.x, rect.y + (rect.h * 2) / 3);
+      overlayCtx.lineTo(rect.x + rect.w, rect.y + (rect.h * 2) / 3);
+      overlayCtx.stroke();
+
+      // 8 Resize Handles
+      const handleSize = 7;
+      const pts = [
+        [rect.x, rect.y],
+        [rect.x + rect.w / 2, rect.y],
+        [rect.x + rect.w, rect.y],
+        [rect.x + rect.w, rect.y + rect.h / 2],
+        [rect.x + rect.w, rect.y + rect.h],
+        [rect.x + rect.w / 2, rect.y + rect.h],
+        [rect.x, rect.y + rect.h],
+        [rect.x, rect.y + rect.h / 2]
+      ];
+      pts.forEach(([hx, hy]) => {
+        overlayCtx.fillStyle = '#ffffff';
+        overlayCtx.strokeStyle = '#ea580c';
+        overlayCtx.lineWidth = 2;
+        overlayCtx.fillRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+        overlayCtx.strokeRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+      });
+
+      // Dimension Pill Tag
+      const label = `${Math.round(rect.w)} × ${Math.round(rect.h)} px  (${Math.round(rect.x)}, ${Math.round(rect.y)})`;
+      overlayCtx.font = '600 12px JetBrains Mono, monospace';
+      const textWidth = overlayCtx.measureText(label).width;
+      const pillX = Math.max(6, Math.min(overlayCanvas.width - textWidth - 20, rect.x));
+      const pillY = rect.y > 30 ? rect.y - 28 : rect.y + 8;
+      drawRoundedRect(overlayCtx, pillX, pillY, textWidth + 16, 22, 5, '#0f172a', '#f97316');
+      overlayCtx.fillStyle = '#f8fafc';
+      overlayCtx.fillText(label, pillX + 8, pillY + 15);
+      overlayCtx.restore();
+    }
+
+    function drawColorPickerLoupe(x, y) {
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      const pixel = mainCtx.getImageData(x, y, 1, 1).data;
+      const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
+      document.getElementById('pickedColorSwatch').style.backgroundColor = hex;
+      document.getElementById('pickedColorHex').textContent = `${hex} (${pixel[0]},${pixel[1]},${pixel[2]})`;
+
+      const radius = 48;
+      const lx = Math.min(overlayCanvas.width - radius - 14, Math.max(radius + 14, x + 58));
+      const ly = Math.min(overlayCanvas.height - radius - 14, Math.max(radius + 14, y - 58));
+
+      overlayCtx.save();
+      overlayCtx.beginPath();
+      overlayCtx.arc(lx, ly, radius, 0, Math.PI * 2);
+      overlayCtx.clip();
+
+      // Draw zoomed 9x9 pixel grid
+      const gridCount = 9;
+      const cellSize = (radius * 2) / gridCount;
+      const half = Math.floor(gridCount / 2);
+
+      for (let gy = -half; gy <= half; gy++) {
+        for (let gx = -half; gx <= half; gx++) {
+          const sx = Math.min(mainCanvas.width - 1, Math.max(0, x + gx));
+          const sy = Math.min(mainCanvas.height - 1, Math.max(0, y + gy));
+          const p = mainCtx.getImageData(sx, sy, 1, 1).data;
+          overlayCtx.fillStyle = `rgb(${p[0]},${p[1]},${p[2]})`;
+          overlayCtx.fillRect(
+            lx - radius + (gx + half) * cellSize,
+            ly - radius + (gy + half) * cellSize,
+            Math.ceil(cellSize),
+            Math.ceil(cellSize)
+          );
+        }
+      }
+
+      // Center pixel highlight
+      overlayCtx.strokeStyle = '#f97316';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.strokeRect(
+        lx - cellSize / 2,
+        ly - cellSize / 2,
+        cellSize,
+        cellSize
+      );
+      overlayCtx.restore();
+
+      // Outer ring
+      overlayCtx.save();
+      overlayCtx.beginPath();
+      overlayCtx.arc(lx, ly, radius, 0, Math.PI * 2);
+      overlayCtx.strokeStyle = '#ffffff';
+      overlayCtx.lineWidth = 3;
+      overlayCtx.stroke();
+      overlayCtx.restore();
+    }
+
+    // =========================================================================
+    // 6. Pointer Events on Overlay Canvas
+    // =========================================================================
+    overlayCanvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      const pos = getCanvasCoordinates(e);
+      state.isDrawing = true;
+      state.startX = pos.x;
+      state.startY = pos.y;
+      state.currX = pos.x;
+      state.currY = pos.y;
+
+      if (state.currentTool === 'text') {
+        state.isDrawing = false;
+        openFloatingTextEditor(pos.x, pos.y);
+        return;
+      }
+
+      if (state.currentTool === 'step') {
+        state.isDrawing = false;
+        drawStepBadge(mainCtx, pos.x, pos.y, state.stepCounter, state.color, state.strokeSize);
+        state.stepCounter++;
+        pushHistory();
+        return;
+      }
+
+      if (state.currentTool === 'picker') {
+        state.isDrawing = false;
+        const p = mainCtx.getImageData(pos.x, pos.y, 1, 1).data;
+        const hex = rgbToHex(p[0], p[1], p[2]);
+        setSelectedColor(hex);
+        copyTextSafe(hex);
+        showToast(`已取色并复制色值: ${hex}`);
+        return;
+      }
+
+      if (state.currentTool === 'pen') {
+        mainCtx.save();
+        mainCtx.beginPath();
+        mainCtx.moveTo(pos.x, pos.y);
+        mainCtx.strokeStyle = state.color;
+        mainCtx.lineWidth = state.strokeSize;
+        mainCtx.lineCap = 'round';
+        mainCtx.lineJoin = 'round';
+      }
+
+      if (state.currentTool === 'mosaic' && state.mosaicBrushMode) {
+        const brushSize = Math.max(24, state.strokeSize * 5);
+        const blockSize = Math.max(8, Math.round(state.strokeSize * 2.2));
+        pixelateRegionOnMainCanvas(pos.x - brushSize / 2, pos.y - brushSize / 2, brushSize, brushSize, blockSize);
+      }
+    });
+
+    overlayCanvas.addEventListener('pointermove', (e) => {
+      const pos = getCanvasCoordinates(e);
+      document.getElementById('statusCursorCoords').textContent = `X: ${pos.x}, Y: ${pos.y}`;
+
+      if (state.currentTool === 'picker' && !state.isDrawing) {
+        drawColorPickerLoupe(pos.x, pos.y);
+        return;
+      }
+
+      if (!state.isDrawing) return;
+      state.currX = pos.x;
+      state.currY = pos.y;
+
+      if (state.currentTool === 'crop') {
+        const rx = Math.min(state.startX, pos.x);
+        const ry = Math.min(state.startY, pos.y);
+        const rw = Math.abs(pos.x - state.startX);
+        const rh = Math.abs(pos.y - state.startY);
+        state.cropRect = { x: rx, y: ry, w: rw, h: rh };
+        drawCropOverlay(state.cropRect);
+        const selInfo = document.getElementById('statusSelectionInfo');
+        selInfo.classList.remove('hidden');
+        selInfo.textContent = `选区: ${rw} × ${rh} px`;
+        document.getElementById('cropActionGroup').classList.remove('hidden');
+        document.getElementById('cropActionGroup').classList.add('flex');
+      } else if (state.currentTool === 'rect') {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        drawRectAnnotation(overlayCtx, state.startX, state.startY, pos.x, pos.y, state.color, state.strokeSize, state.rectFilled);
+      } else if (state.currentTool === 'arrow') {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        drawArrowAnnotation(overlayCtx, state.startX, state.startY, pos.x, pos.y, state.color, state.strokeSize);
+      } else if (state.currentTool === 'pen') {
+        mainCtx.lineTo(pos.x, pos.y);
+        mainCtx.stroke();
+      } else if (state.currentTool === 'mosaic') {
+        if (state.mosaicBrushMode) {
+          const brushSize = Math.max(24, state.strokeSize * 5);
+          const blockSize = Math.max(8, Math.round(state.strokeSize * 2.2));
+          pixelateRegionOnMainCanvas(pos.x - brushSize / 2, pos.y - brushSize / 2, brushSize, brushSize, blockSize);
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          overlayCtx.strokeStyle = '#f97316';
+          overlayCtx.lineWidth = 1.5;
+          overlayCtx.strokeRect(pos.x - brushSize / 2, pos.y - brushSize / 2, brushSize, brushSize);
+        } else {
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          const rx = Math.min(state.startX, pos.x);
+          const ry = Math.min(state.startY, pos.y);
+          const rw = Math.abs(pos.x - state.startX);
+          const rh = Math.abs(pos.y - state.startY);
+          overlayCtx.fillStyle = 'rgba(249, 115, 22, 0.18)';
+          overlayCtx.fillRect(rx, ry, rw, rh);
+          overlayCtx.strokeStyle = '#f97316';
+          overlayCtx.setLineDash([5, 3]);
+          overlayCtx.strokeRect(rx, ry, rw, rh);
+          overlayCtx.setLineDash([]);
+        }
+      }
+    });
+
+    window.addEventListener('pointerup', () => {
+      if (!state.isDrawing) return;
+      state.isDrawing = false;
+
+      if (state.currentTool === 'rect') {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        if (Math.abs(state.currX - state.startX) > 3 && Math.abs(state.currY - state.startY) > 3) {
+          drawRectAnnotation(mainCtx, state.startX, state.startY, state.currX, state.currY, state.color, state.strokeSize, state.rectFilled);
+          pushHistory();
+        }
+      } else if (state.currentTool === 'arrow') {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        if (Math.hypot(state.currX - state.startX, state.currY - state.startY) > 6) {
+          drawArrowAnnotation(mainCtx, state.startX, state.startY, state.currX, state.currY, state.color, state.strokeSize);
+          pushHistory();
+        }
+      } else if (state.currentTool === 'pen') {
+        mainCtx.restore();
+        pushHistory();
+      } else if (state.currentTool === 'mosaic') {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        if (!state.mosaicBrushMode) {
+          const rx = Math.min(state.startX, state.currX);
+          const ry = Math.min(state.startY, state.currY);
+          const rw = Math.abs(state.currX - state.startX);
+          const rh = Math.abs(state.currY - state.startY);
+          const blockSize = Math.max(8, Math.round(state.strokeSize * 2.2));
+          if (rw > 4 && rh > 4) {
+            pixelateRegionOnMainCanvas(rx, ry, rw, rh, blockSize);
+            pushHistory();
+          }
+        } else {
+          pushHistory();
+        }
+      }
+    });
+
+    // =========================================================================
+    // 7. Floating Text Annotation Editor
+    // =========================================================================
+    function openFloatingTextEditor(canvasX, canvasY) {
+      state.pendingTextPos = { x: canvasX, y: canvasY };
+      const editor = document.getElementById('floatingTextEditor');
+      const input = document.getElementById('floatingTextInput');
+      const rect = overlayCanvas.getBoundingClientRect();
+      const cssX = (canvasX / overlayCanvas.width) * rect.width;
+      const cssY = (canvasY / overlayCanvas.height) * rect.height;
+
+      editor.style.left = `${Math.min( Math.max(8, cssX), Math.max(8, rect.width - 260) )}px`;
+      editor.style.top = `${Math.min( Math.max(8, cssY), Math.max(8, rect.height - 110) )}px`;
+      editor.classList.remove('hidden');
+      input.value = '';
+      setTimeout(() => input.focus(), 20);
+    }
+
+    function commitFloatingText() {
+      const editor = document.getElementById('floatingTextEditor');
+      const input = document.getElementById('floatingTextInput');
+      const withBg = document.getElementById('textBgFillToggle').checked;
+      const text = input.value.trim();
+
+      if (text && state.pendingTextPos) {
+        const fontSize = Math.max(15, 12 + state.strokeSize * 2.2);
+        mainCtx.save();
+        mainCtx.font = `600 ${fontSize}px Inter, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        const metrics = mainCtx.measureText(text);
+        const padX = 8;
+        const padY = 5;
+        const boxW = metrics.width + padX * 2;
+        const boxH = fontSize + padY * 2;
+
+        if (withBg) {
+          drawRoundedRect(
+            mainCtx,
+            state.pendingTextPos.x,
+            state.pendingTextPos.y - fontSize,
+            boxW,
+            boxH,
+            6,
+            'rgba(15, 23, 42, 0.88)',
+            state.color
+          );
+        }
+
+        mainCtx.fillStyle = state.color;
+        mainCtx.textBaseline = 'top';
+        mainCtx.fillText(text, state.pendingTextPos.x + padX, state.pendingTextPos.y - fontSize + padY);
+        mainCtx.restore();
+        pushHistory();
+      }
+
+      editor.classList.add('hidden');
+      state.pendingTextPos = null;
+    }
+
+    document.getElementById('btnConfirmText').addEventListener('click', commitFloatingText);
+    document.getElementById('btnCancelText').addEventListener('click', () => {
+      document.getElementById('floatingTextEditor').classList.add('hidden');
+      state.pendingTextPos = null;
+    });
+    document.getElementById('floatingTextInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitFloatingText();
+      } else if (e.key === 'Escape') {
+        document.getElementById('floatingTextEditor').classList.add('hidden');
+        state.pendingTextPos = null;
+      }
+    });
+
+    // =========================================================================
+    // 8. Region Crop Execution
+    // =========================================================================
+    function applyCropSelection() {
+      if (!state.cropRect || state.cropRect.w < 10 || state.cropRect.h < 10) {
+        showToast('请先拖拽框选有效的截图区域', 'info');
+        return;
+      }
+      const { x, y, w, h } = state.cropRect;
+      const croppedData = mainCtx.getImageData(x, y, w, h);
+      mainCanvas.width = w;
+      mainCanvas.height = h;
+      overlayCanvas.width = w;
+      overlayCanvas.height = h;
+      mainCtx.putImageData(croppedData, 0, 0);
+      clearCropSelection();
+      pushHistory();
+      selectTool('rect');
+      showToast(`已裁剪为 ${w} × ${h} px`);
+    }
+
+    function clearCropSelection() {
+      state.cropRect = null;
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      document.getElementById('statusSelectionInfo').classList.add('hidden');
+      document.getElementById('cropActionGroup').classList.add('hidden');
+      document.getElementById('cropActionGroup').classList.remove('flex');
+    }
+
+    document.getElementById('btnApplyCrop').addEventListener('click', applyCropSelection);
+    document.getElementById('btnCancelCrop').addEventListener('click', clearCropSelection);
+
+    // =========================================================================
+    // 9. Screen Capture (Tauri Rust `screenshots` + Browser `getDisplayMedia` Fallback)
+    // =========================================================================
+    async function triggerScreenCapture() {
+      const monitorId = parseInt(document.getElementById('monitorSelect').value, 10);
+      const hideWindow = document.getElementById('hideWindowToggle').checked;
+
+      // 1. Try Tauri Rust Backend first
+      if (state.isTauri) {
+        try {
+          showToast('正在通过 Rust screenshots 捕获屏幕...', 'info');
+          const res = await tauriInvoke('capture_screen', { monitorId, hideWindow });
+          await loadDataUrlToCanvas(res.base64_png);
+          showToast(`捕获成功 (${res.width} × ${res.height} px)`);
+          return;
+        } catch (err) {
+          showToast('Tauri 抓屏调用失败: ' + err.message, 'error');
+        }
+      }
+
+      // 2. Try Browser Native Screen Capture API (getDisplayMedia)
+      if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: 'always' },
+            audio: false
+          });
+          const video = document.createElement('video');
+          video.srcObject = stream;
+          video.muted = true;
+          await video.play();
+
+          const vw = video.videoWidth || 1280;
+          const vh = video.videoHeight || 720;
+          mainCanvas.width = vw;
+          mainCanvas.height = vh;
+          overlayCanvas.width = vw;
+          overlayCanvas.height = vh;
+          mainCtx.drawImage(video, 0, 0, vw, vh);
+
+          stream.getTracks().forEach(t => t.stop());
+          clearCropSelection();
+          pushHistory();
+          showToast(`已捕获真实屏幕画面 (${vw} × ${vh} px)`);
+          return;
+        } catch (err) {
+          // In sandboxed iframe or user cancelled: smoothly switch to simulated screen capture
+          state.sceneIndex++;
+          mainCanvas.width = 1120;
+          mainCanvas.height = 630;
+          overlayCanvas.width = 1120;
+          overlayCanvas.height = 630;
+          renderSimulatedDesktop(state.sceneIndex);
+          pushHistory();
+          showToast('已捕获高分屏示例桌面（本地运行 Tauri 或独立打开网页即可抓取真实系统屏幕）', 'info');
+          return;
+        }
+      }
+
+      // 3. Fallback if getDisplayMedia unavailable
+      state.sceneIndex++;
+      renderSimulatedDesktop(state.sceneIndex);
+      pushHistory();
+      showToast('已刷新示例桌面截图', 'info');
+    }
+
+    function loadDataUrlToCanvas(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          mainCanvas.width = img.width;
+          mainCanvas.height = img.height;
+          overlayCanvas.width = img.width;
+          overlayCanvas.height = img.height;
+          mainCtx.drawImage(img, 0, 0);
+          clearCropSelection();
+          pushHistory();
+          resolve();
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+
+    // =========================================================================
+    // 10. Toolbar & Export Wiring
+    // =========================================================================
+    const TOOL_HINTS = {
+      crop: '当前工具：区域框选 — 拖拽框选区域后点击顶部“裁剪选区”即可裁切图像',
+      rect: '当前工具：矩形标注 — 拖拽绘制矩形框，可切换空心边框或半透明高亮填充',
+      arrow: '当前工具：箭头标注 — 按住拖拽绘制指向箭头，箭头大小随粗细自动缩放',
+      mosaic: '当前工具：马赛克打码 — 支持画笔涂抹打码或框选矩形打码，真实像素格化处理',
+      text: '当前工具：文字批注 — 点击画布任意位置弹出文字输入框，回车确认上屏',
+      pen: '当前工具：自由画笔 — 按住鼠标自由涂鸦或圈出重点',
+      step: '当前工具：序号标尺 — 点击画布即可盖章递增步骤序号 ① ② ③',
+      picker: '当前工具：放大镜取色器 — 移动鼠标预览像素网格，点击自动复制 HEX 色值'
+    };
+
+    function selectTool(toolName) {
+      state.currentTool = toolName;
+      document.querySelectorAll('[data-tool]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tool === toolName);
+      });
+      document.getElementById('statusToolHint').textContent = TOOL_HINTS[toolName] || '';
+
+      const subBtn = document.getElementById('subModeToggleBtn');
+      const sizeLabel = document.getElementById('sizeSliderLabel');
+      if (toolName === 'rect') {
+        subBtn.classList.remove('hidden');
+        subBtn.textContent = state.rectFilled ? '模式: 半透明填充' : '模式: 空心边框';
+        sizeLabel.textContent = '边框';
+      } else if (toolName === 'mosaic') {
+        subBtn.classList.remove('hidden');
+        subBtn.textContent = state.mosaicBrushMode ? '模式: 涂抹画笔' : '模式: 矩形区域';
+        sizeLabel.textContent = '颗粒';
+      } else {
+        subBtn.classList.add('hidden');
+        sizeLabel.textContent = toolName === 'text' ? '字号' : '粗细';
+      }
+
+      if (toolName !== 'crop') {
+        clearCropSelection();
+      }
+    }
+
+    document.querySelectorAll('[data-tool]').forEach(btn => {
+      btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+    });
+
+    document.getElementById('subModeToggleBtn').addEventListener('click', () => {
+      if (state.currentTool === 'rect') {
+        state.rectFilled = !state.rectFilled;
+        document.getElementById('subModeToggleBtn').textContent = state.rectFilled ? '模式: 半透明填充' : '模式: 空心边框';
+      } else if (state.currentTool === 'mosaic') {
+        state.mosaicBrushMode = !state.mosaicBrushMode;
+        document.getElementById('subModeToggleBtn').textContent = state.mosaicBrushMode ? '模式: 涂抹画笔' : '模式: 矩形区域';
+      }
+    });
+
+    function setSelectedColor(hex) {
+      state.color = hex;
+      document.getElementById('customColorInput').value = hex;
+      document.getElementById('pickedColorSwatch').style.backgroundColor = hex;
+      document.getElementById('pickedColorHex').textContent = hex.toUpperCase();
+      document.querySelectorAll('.color-dot').forEach(dot => {
+        dot.classList.toggle('active', dot.dataset.color.toLowerCase() === hex.toLowerCase());
+      });
+    }
+
+    document.querySelectorAll('.color-dot').forEach(dot => {
+      dot.addEventListener('click', () => setSelectedColor(dot.dataset.color));
+    });
+    document.getElementById('customColorInput').addEventListener('input', (e) => {
+      setSelectedColor(e.target.value);
+    });
+
+    document.getElementById('strokeSizeInput').addEventListener('input', (e) => {
+      state.strokeSize = parseInt(e.target.value, 10);
+      document.getElementById('strokeSizeValue').textContent = `${state.strokeSize}px`;
+    });
+
+    document.getElementById('btnCaptureScreen').addEventListener('click', triggerScreenCapture);
+    document.getElementById('btnSwitchScene').addEventListener('click', () => {
+      state.sceneIndex++;
+      mainCanvas.width = 1120;
+      mainCanvas.height = 630;
+      overlayCanvas.width = 1120;
+      overlayCanvas.height = 630;
+      renderSimulatedDesktop(state.sceneIndex);
+      pushHistory();
+      showToast('已切换示例桌面屏幕');
+    });
+
+    document.getElementById('fileUploadInput').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        await loadDataUrlToCanvas(ev.target.result);
+        showToast(`已载入本地图片: ${file.name}`);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    document.getElementById('btnUndo').addEventListener('click', undoAction);
+    document.getElementById('btnRedo').addEventListener('click', redoAction);
+    document.getElementById('btnClearAll').addEventListener('click', () => {
+      if (state.history.length > 0) {
+        const first = state.history[0];
+        state.history = [first];
+        state.redoStack = [];
+        state.stepCounter = 1;
+        restoreSnapshot(first);
+        updateHistoryButtons();
+        showToast('已清空所有标注并恢复原始截图', 'info');
+      }
+    });
+
+    // Copy Image to Clipboard (Tauri native + Browser Clipboard API + Base64 fallback)
+    document.getElementById('btnCopyClipboard').addEventListener('click', async () => {
+      const dataUrl = getExportDataUrl();
+      if (state.isTauri) {
+        try {
+          await tauriInvoke('copy_image_to_clipboard', { base64Png: dataUrl });
+          showToast('已通过 Rust arboard 写入系统剪贴板！');
+          return;
+        } catch (err) {
+          // continue to web clipboard fallback
+        }
+      }
+
+      try {
+        if (navigator.clipboard && window.ClipboardItem) {
+          const blob = await (await fetch(dataUrl)).blob();
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          showToast('截图已复制到剪贴板，可直接 Ctrl+V 粘贴！');
+          return;
+        }
+      } catch (e) {
+        // Fallback when iframe blocks image clipboard
+      }
+      copyTextSafe(dataUrl);
+      showToast('已复制图像 Base64 数据流到剪贴板');
+    });
+
+    // Save PNG
+    document.getElementById('btnExportPng').addEventListener('click', () => {
+      const dataUrl = getExportDataUrl();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `SnapRust_${timestamp}.png`;
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`已导出高清截图: ${filename}`);
+    });
+
+    function getExportDataUrl() {
+      if (state.cropRect && state.cropRect.w > 10 && state.cropRect.h > 10) {
+        const temp = document.createElement('canvas');
+        temp.width = state.cropRect.w;
+        temp.height = state.cropRect.h;
+        const tCtx = temp.getContext('2d');
+        tCtx.drawImage(
+          mainCanvas,
+          state.cropRect.x, state.cropRect.y, state.cropRect.w, state.cropRect.h,
+          0, 0, state.cropRect.w, state.cropRect.h
+        );
+        return temp.toDataURL('image/png');
+      }
+      return mainCanvas.toDataURL('image/png');
+    }
+
+    // Paste image from clipboard directly (Ctrl+V)
+    window.addEventListener('paste', (e) => {
+      if (!e.clipboardData) return;
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const blob = items[i].getAsFile();
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            loadDataUrlToCanvas(ev.target.result);
+            showToast('已从剪贴板粘贴图像到画板');
+          };
+          reader.readAsDataURL(blob);
+          break;
+        }
+      }
+    });
+
+    // Keyboard Shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement === document.getElementById('floatingTextInput')) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        undoAction();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redoAction();
+      } else if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey) {
+        selectTool('crop');
+      } else if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) {
+        selectTool('rect');
+      } else if (e.key.toLowerCase() === 'a' && !e.ctrlKey && !e.metaKey) {
+        selectTool('arrow');
+      } else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey) {
+        selectTool('mosaic');
+      } else if (e.key.toLowerCase() === 't' && !e.ctrlKey && !e.metaKey) {
+        selectTool('text');
+      } else if (e.key.toLowerCase() === 'p' && !e.ctrlKey && !e.metaKey) {
+        selectTool('pen');
+      } else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) {
+        selectTool('step');
+      } else if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.metaKey) {
+        selectTool('picker');
+      }
+    });
+
+    // =========================================================================
+    // 11. Workspace vs Source Code View Switching
+    // =========================================================================
+    function switchMainView(view) {
+      const ws = document.getElementById('workspaceView');
+      const sc = document.getElementById('sourceCodeView');
+      const btnWs = document.getElementById('tabWorkspaceBtn');
+      const btnSc = document.getElementById('tabSourceCodeBtn');
+      if (view === 'code') {
+        ws.classList.add('hidden');
+        sc.classList.remove('hidden');
+        btnSc.className = 'px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 text-white transition flex items-center gap-1';
+        btnWs.className = 'px-2.5 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition';
+      } else {
+        sc.classList.add('hidden');
+        ws.classList.remove('hidden');
+        btnWs.className = 'px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 text-white transition';
+        btnSc.className = 'px-2.5 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition flex items-center gap-1';
+      }
+    }
+
+    document.getElementById('tabWorkspaceBtn').addEventListener('click', () => switchMainView('workspace'));
+    document.getElementById('tabSourceCodeBtn').addEventListener('click', () => switchMainView('code'));
+    document.getElementById('btnBackToCanvas').addEventListener('click', () => switchMainView('workspace'));
+
+    function renderCodeTab(tabKey) {
+      state.activeCodeTab = tabKey;
+      document.getElementById('codeDisplayArea').textContent = RUST_PROJECT_FILES[tabKey] || '';
+      document.querySelectorAll('.code-tab-btn').forEach(btn => {
+        const active = btn.dataset.codefile === tabKey;
+        btn.className = active
+          ? 'code-tab-btn px-3 py-1.5 rounded-lg text-xs font-mono-code bg-orange-500/20 text-orange-300 border border-orange-500/40'
+          : 'code-tab-btn px-3 py-1.5 rounded-lg text-xs font-mono-code text-slate-400 hover:text-white';
+      });
+    }
+
+    document.querySelectorAll('.code-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => renderCodeTab(btn.dataset.codefile));
+    });
+
+    document.getElementById('btnCopyCodeSnippet').addEventListener('click', () => {
+      copyTextSafe(RUST_PROJECT_FILES[state.activeCodeTab] || '');
+      showToast('源码已复制到剪贴板');
+    });
+
+    // =========================================================================
+    // 12. Utility Functions & Initialization
+    // =========================================================================
+    function hexToRgba(hex, alpha) {
+      const clean = hex.replace('#', '');
+      const bigint = parseInt(clean, 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+    }
+
+    function copyTextSafe(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => fallbackCopyText(text));
+          return;
+        }
+      } catch (e) {}
+      fallbackCopyText(text);
+    }
+
+    function fallbackCopyText(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+
+    async function initApp() {
+      renderCodeTab('main_rs');
+      renderSimulatedDesktop(0);
+      pushHistory();
+
+      if (state.isTauri) {
+        const badge = document.getElementById('runtimeBadge');
+        badge.textContent = 'Tauri Rust 原生模式';
+        badge.className = 'text-[11px] font-mono-code px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+        try {
+          const monitors = await tauriInvoke('get_monitors');
+          if (Array.isArray(monitors) && monitors.length > 0) {
+            const sel = document.getElementById('monitorSelect');
+            sel.innerHTML = '';
+            monitors.forEach((m, idx) => {
+              const opt = document.createElement('option');
+              opt.value = String(m.id);
+              opt.textContent = `${m.is_primary ? '主显示器' : '副显示器'} #${idx + 1} (${m.width}×${m.height} @${Math.round(m.scale_factor * 100)}%)`;
+              sel.appendChild(opt);
+            });
+          }
+        } catch (e) {}
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', initApp);
+  </script>
+</body>
+</html>

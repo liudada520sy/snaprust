@@ -1,0 +1,21 @@
+[package]
+name = "rust-tauri-snip"
+version = "0.1.0"
+description = "Cross-platform screenshot and annotation utility built with Rust (screenshots) + Tauri + Web Canvas"
+authors = ["Developer"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.7", features = ["window-hide", "window-show", "window-set-focus"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+screenshots = "0.8.10"
+image = { version = "0.24", default-features = false, features = ["png"] }
+base64 = "0.22"
+arboard = "3.4"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

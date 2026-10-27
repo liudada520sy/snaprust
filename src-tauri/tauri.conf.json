@@ -15,9 +15,7 @@
     "allowlist": {
       "all": false,
       "window": {
-        "hide": true,
-        "show": true,
-        "setFocus": true
+        "all": true
       }
     },
     "bundle": {

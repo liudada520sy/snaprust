@@ -53,16 +53,19 @@ fn get_monitors() -> Result<Vec<MonitorInfo>, String> {
     Ok(list)
 }
 
-/// 捕获指定显示器全屏图像并编码为 Base64 Data URL 返回给前端 Canvas
+/// 捕获指定显示器画面：
+/// 1. 抓屏前先彻底隐藏自身窗口（等待 380ms 确保 Windows/macOS DWM 窗口动画彻底消失，防止截到自身残影）
+/// 2. 抓屏完成后，如果是选区截图模式 (`enter_snip_mode = Some(true)`)，自动将窗口切换为无边框全屏置顶遮罩，让用户在全屏画面上自由拖拽选区
 #[tauri::command]
 async fn capture_screen(
     window: Window,
     monitor_id: Option<u32>,
     hide_window: bool,
+    enter_snip_mode: Option<bool>,
 ) -> Result<CaptureResult, String> {
     if hide_window {
         let _ = window.hide();
-        thread::sleep(Duration::from_millis(220));
+        thread::sleep(Duration::from_millis(380));
     }
 
     let screens = Screen::all().map_err(|e| format!("获取屏幕列表失败: {}", e))?;
@@ -91,6 +94,11 @@ async fn capture_screen(
         .map_err(|e| format!("PNG 编码失败: {}", e))?;
 
     if hide_window {
+        if enter_snip_mode.unwrap_or(false) {
+            let _ = window.set_decorations(false);
+            let _ = window.set_always_on_top(true);
+            let _ = window.set_fullscreen(true);
+        }
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -102,6 +110,25 @@ async fn capture_screen(
         base64_png: format!("data:image/png;base64,{}", b64),
         monitor_id: target.display_info.id,
     })
+}
+
+/// 切换全屏无边框选区框选模式 (`active = true`) 与常规窗口标注模式 (`active = false`)
+#[tauri::command]
+fn set_snip_overlay_mode(window: Window, active: bool) -> Result<(), String> {
+    if active {
+        let _ = window.set_decorations(false);
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_fullscreen(true);
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        let _ = window.set_fullscreen(false);
+        let _ = window.set_always_on_top(false);
+        let _ = window.set_decorations(true);
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    Ok(())
 }
 
 /// 将前端 Canvas 导出的 Base64 PNG 直接写入系统原生剪贴板
@@ -158,6 +185,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_monitors,
             capture_screen,
+            set_snip_overlay_mode,
             copy_image_to_clipboard,
             save_image_to_disk
         ])

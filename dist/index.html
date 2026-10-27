@@ -45,7 +45,6 @@
       transform: scale(1.22);
       box-shadow: 0 0 0 2px #0f172a, 0 0 0 4px #f8fafc;
     }
-    /* Custom Scrollbar for code drawer */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
@@ -55,7 +54,7 @@
 <body class="h-screen w-screen flex flex-col select-none">
 
   <!-- Top Navigation & Capture Bar -->
-  <header class="h-14 bg-slate-900/95 border-b border-slate-800 px-3 sm:px-5 flex items-center justify-between gap-2 shrink-0 z-30">
+  <header id="appMainHeader" class="h-14 bg-slate-900/95 border-b border-slate-800 px-3 sm:px-5 flex items-center justify-between gap-2 shrink-0 z-30">
     <div class="flex items-center gap-3">
       <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
         <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
@@ -71,13 +70,13 @@
             Web Canvas 预览模式
           </span>
         </div>
-        <p class="text-[11px] text-slate-400 hidden sm:block">Rust <code class="text-orange-400">screenshots</code> 抓屏引擎 + Tauri 2.0 + HTML5 Canvas 标注画板</p>
+        <p class="text-[11px] text-slate-400 hidden lg:block">Rust <code class="text-orange-400">screenshots</code> 隐藏窗口抓屏 + 全屏沉浸选区裁剪 + Canvas 标注</p>
       </div>
     </div>
 
     <!-- Capture Source Controls -->
     <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-      <!-- Monitor Selector (Populated by Tauri get_monitors or simulated displays) -->
+      <!-- Monitor Selector -->
       <div class="flex items-center bg-slate-800/90 border border-slate-700/80 rounded-lg px-2 py-1 text-xs">
         <svg class="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
@@ -88,14 +87,22 @@
         </select>
       </div>
 
-      <label class="hidden md:flex items-center gap-1.5 text-xs text-slate-300 bg-slate-800/60 border border-slate-700/60 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-slate-800">
+      <label class="hidden xl:flex items-center gap-1.5 text-xs text-slate-300 bg-slate-800/60 border border-slate-700/60 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-slate-800" title="截图前自动隐藏本软件窗口并等待动画结束，避免截到软件自身">
         <input id="hideWindowToggle" type="checkbox" checked class="accent-orange-500 rounded cursor-pointer" />
         <span>抓屏时隐藏自身窗口</span>
       </label>
 
-      <!-- Main Capture Trigger -->
-      <button id="btnCaptureScreen" type="button" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-400 hover:to-amber-500 text-white font-medium text-xs sm:text-sm shadow-md shadow-orange-500/20 active:scale-95 transition">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <!-- Primary Region Snip Button (Hides app -> Captures screen -> Opens Fullscreen Region Selector) -->
+      <button id="btnRegionSnip" type="button" class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-400 hover:to-amber-500 text-white font-semibold text-xs sm:text-sm shadow-md shadow-orange-500/25 active:scale-95 transition" title="自动隐藏当前软件窗口并进入全屏框选截图模式 (快捷键: F1)">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 2v14a2 2 0 002 2h14M18 22V8a2 2 0 00-2-2H2"/>
+        </svg>
+        <span>选区截图</span>
+      </button>
+
+      <!-- Secondary Fullscreen Capture Trigger -->
+      <button id="btnCaptureScreen" type="button" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 font-medium text-xs transition" title="隐藏窗口并直接抓取整张屏幕">
+        <svg class="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
           <circle cx="12" cy="13" r="3"/>
         </svg>
@@ -137,7 +144,7 @@
   <main id="workspaceView" class="flex-1 flex flex-col relative overflow-hidden">
 
     <!-- Secondary Floating Annotation Toolbar -->
-    <div class="bg-slate-900/95 border-b border-slate-800/90 px-3 py-2 flex flex-wrap items-center justify-between gap-2 z-20 shadow-md">
+    <div id="annotationToolbar" class="bg-slate-900/95 border-b border-slate-800/90 px-3 py-2 flex flex-wrap items-center justify-between gap-2 z-20 shadow-md">
       <!-- Primary Annotation Tools -->
       <div class="flex items-center gap-1 flex-wrap">
         <button data-tool="crop" type="button" class="tool-btn px-2.5 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-200 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5" title="框选截图区域 (快捷键: C)">
@@ -269,6 +276,13 @@
       </div>
     </div>
 
+    <!-- Fullscreen Region Snip Top HUD Banner (Shown during active region snipping) -->
+    <div id="snipTopHud" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-slate-950/90 border border-orange-500/60 text-slate-100 px-4 py-2 rounded-full shadow-2xl items-center gap-3 text-xs backdrop-blur-md">
+      <span class="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse"></span>
+      <span><strong>选区截图模式</strong>（软件窗口已自动隐藏抓屏）：按住左键拖拽框选 · 拖动控制点微调 · <strong>双击选区 / 按 Enter</strong> 确认 · <strong>按 Esc</strong> 取消</span>
+      <button id="btnHudExitSnip" type="button" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px]">退出全屏框选</button>
+    </div>
+
     <!-- Interactive Dual-Layer Canvas Stage -->
     <div id="canvasViewport" class="flex-1 checkerboard relative overflow-auto flex items-center justify-center p-4">
       <div id="canvasWrapper" class="relative shadow-2xl shadow-black/80 border border-slate-700/70 bg-slate-950">
@@ -276,6 +290,31 @@
         <canvas id="mainCanvas" width="1120" height="630" class="block max-w-full h-auto"></canvas>
         <!-- Interactive Overlay Canvas (Active shape preview, crop mask, color loupe) -->
         <canvas id="overlayCanvas" width="1120" height="630" class="absolute inset-0 pointer-events-auto cursor-crosshair w-full h-full"></canvas>
+
+        <!-- On-Canvas Floating Crop / Region Snip Action Bar (Appears right below selection box like WeChat/Snipaste) -->
+        <div id="snipFloatingBar" class="hidden absolute z-40 bg-slate-900/95 border border-orange-500/80 rounded-xl px-2 py-1.5 shadow-2xl items-center gap-1.5 backdrop-blur-md">
+          <button id="btnSnipConfirm" type="button" class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow" title="裁剪选区并进入画板标注 (快捷键: Enter 或双击选区)">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+            </svg>
+            <span>确认选区并标注</span>
+          </button>
+          <button id="btnSnipCopyNow" type="button" class="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium flex items-center gap-1 shadow" title="直接裁剪选区并复制到系统剪贴板">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+            <span>直接复制选区</span>
+          </button>
+          <button id="btnSnipSaveNow" type="button" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs flex items-center gap-1" title="直接将当前选区保存为 PNG">
+            <span>保存选区</span>
+          </button>
+          <button id="btnSnipResetSel" type="button" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs" title="清除当前选区框并重新框选">
+            重选
+          </button>
+          <button id="btnSnipCancel" type="button" class="px-2 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-800/60 text-xs" title="取消选区 (快捷键: Esc)">
+            取消
+          </button>
+        </div>
 
         <!-- Floating WYSIWYG Text Annotation Box (Replaces browser prompt()) -->
         <div id="floatingTextEditor" class="hidden absolute z-30 bg-slate-900/95 border-2 border-orange-500 rounded-xl p-2 shadow-2xl min-w-[240px]">
@@ -296,9 +335,9 @@
     </div>
 
     <!-- Bottom Status & Telemetry Bar -->
-    <footer class="h-8 bg-slate-950 border-t border-slate-800/90 px-4 flex items-center justify-between text-[11px] text-slate-400 shrink-0">
+    <footer id="appMainFooter" class="h-8 bg-slate-950 border-t border-slate-800/90 px-4 flex items-center justify-between text-[11px] text-slate-400 shrink-0">
       <div class="flex items-center gap-4">
-        <span id="statusToolHint" class="text-slate-300 font-medium">当前工具：矩形标注 — 在画布上按住鼠标左键拖拽绘制</span>
+        <span id="statusToolHint" class="text-slate-300 font-medium">当前工具：矩形标注 — 在画布上按住鼠标左键拖拽绘制（点击顶部【选区截图】可隐藏窗口并框选屏幕）</span>
         <span id="statusSelectionInfo" class="font-mono-code text-amber-400 hidden">选区: 0 × 0 px</span>
       </div>
       <div class="flex items-center gap-4 font-mono-code">
@@ -318,10 +357,10 @@
       <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 class="text-lg font-bold text-white flex items-center gap-2">
-            <span>Rust (`screenshots` + `arboard`) + Tauri 2.0 完整跨平台工程源码</span>
+            <span>Rust (`screenshots` + `arboard`) + Tauri 完整跨平台工程源码（含隐藏窗口与全屏选区截图）</span>
           </h2>
           <p class="text-xs text-slate-400 mt-1">
-            底层使用 Rust <code class="text-orange-400">screenshots</code> 库直接捕获各系统帧缓冲（支持 Windows DXGI/GDI、macOS CGDisplay、Linux X11/Wayland PipeWire），上层复用当前 HTML5 Canvas 标注画板。
+            底层使用 Rust <code class="text-orange-400">screenshots</code> 在完全隐藏软件窗口（380ms 防残影等待）后抓取纯净桌面，并自动切换无边框全屏遮罩供鼠标自由框选裁剪。
           </p>
         </div>
         <button id="btnBackToCanvas" type="button" class="px-3.5 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-xs font-semibold shrink-0 transition">
@@ -371,7 +410,7 @@
 
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use image::ImageFormat;
+use image::ImageOutputFormat;
 use screenshots::Screen;
 use serde::Serialize;
 use std::borrow::Cow;
@@ -414,34 +453,70 @@ fn get_monitors() -> Result<Vec<MonitorInfo>, String> {
     }).collect())
 }
 
+/// 捕获指定显示器画面：先彻底隐藏自身窗口（防止遮挡屏幕），抓屏后可选择直接进入无边框全屏选区框选模式
 #[tauri::command]
-async fn capture_screen(window: Window, monitor_id: Option<u32>, hide_window: bool) -> Result<CaptureResult, String> {
+async fn capture_screen(
+    window: Window,
+    monitor_id: Option<u32>,
+    hide_window: bool,
+    enter_snip_mode: Option<bool>,
+) -> Result<CaptureResult, String> {
     if hide_window {
         let _ = window.hide();
-        thread::sleep(Duration::from_millis(220));
+        // 等待 380ms 确保 Windows/macOS 窗口隐藏动画彻底完成，绝不截到软件自身残影
+        thread::sleep(Duration::from_millis(380));
     }
+
     let screens = Screen::all().map_err(|e| format!("获取屏幕列表失败: {}", e))?;
     let target = match monitor_id {
-        Some(id) => screens.into_iter().find(|s| s.display_info.id == id),
-        None => screens.into_iter().find(|s| s.display_info.is_primary),
+        Some(id) => screens.into_iter().find(|s| s.display_info.id == id)
+            .or_else(|| Screen::all().ok()?.into_iter().next()),
+        None => screens.into_iter().find(|s| s.display_info.is_primary)
+            .or_else(|| Screen::all().ok()?.into_iter().next()),
     }.ok_or_else(|| "未找到目标显示器".to_string())?;
 
     let captured = target.capture().map_err(|e| format!("屏幕捕获失败: {}", e))?;
     let (width, height) = (captured.width(), captured.height());
 
     let mut png_bytes: Vec<u8> = Vec::new();
-    captured.write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+    captured.write_to(&mut Cursor::new(&mut png_bytes), ImageOutputFormat::Png)
         .map_err(|e| format!("PNG 编码失败: {}", e))?;
 
     if hide_window {
+        if enter_snip_mode.unwrap_or(false) {
+            // 进入全屏无边框选区遮罩模式，让用户直接在屏幕画面上拖拽框选区域
+            let _ = window.set_decorations(false);
+            let _ = window.set_always_on_top(true);
+            let _ = window.set_fullscreen(true);
+        }
         let _ = window.show();
         let _ = window.set_focus();
     }
+
     Ok(CaptureResult {
         width, height,
         base64_png: format!("data:image/png;base64,{}", BASE64.encode(&png_bytes)),
         monitor_id: target.display_info.id,
     })
+}
+
+/// 切换全屏无边框选区框选模式与常规软件窗口模式
+#[tauri::command]
+fn set_snip_overlay_mode(window: Window, active: bool) -> Result<(), String> {
+    if active {
+        let _ = window.set_decorations(false);
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_fullscreen(true);
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        let _ = window.set_fullscreen(false);
+        let _ = window.set_always_on_top(false);
+        let _ = window.set_decorations(true);
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -470,7 +545,11 @@ fn save_image_to_disk(base64_png: String, file_path: String) -> Result<String, S
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            get_monitors, capture_screen, copy_image_to_clipboard, save_image_to_disk
+            get_monitors,
+            capture_screen,
+            set_snip_overlay_mode,
+            copy_image_to_clipboard,
+            save_image_to_disk
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -481,17 +560,19 @@ version = "0.1.0"
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "2.0.0", features = [] }
+tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-tauri = { version = "2.0.0", features = ["tray-icon"] }
-tauri-plugin-global-shortcut = "2.0.0"
+tauri = { version = "1.7", features = ["window-all"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 screenshots = "0.8.10"
-image = "0.25"
+image = { version = "0.24", default-features = false, features = ["png"] }
 base64 = "0.22"
-arboard = "3.4"`,
+arboard = "3.4"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]`,
       workflow_yml: `name: Build SnapRust Desktop Binaries
 
 on:
@@ -546,18 +627,39 @@ jobs:
           name: \${{ matrix.artifact_name }}
           path: \${{ matrix.bundle_path }}`,
       tauri_conf: `{
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SnapRust",
-  "version": "0.1.0",
-  "identifier": "com.snaprust.screenshot",
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/1.x/tooling/cli/schema.json",
   "build": {
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "../dist",
+    "distDir": "../dist",
+    "withGlobalTauri": true
   },
-  "app": {
-    "withGlobalTauri": true,
+  "package": {
+    "productName": "SnapRust",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "window": {
+        "all": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.snaprust.screenshot",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "targets": "all"
+    },
     "windows": [
       {
-        "label": "main",
         "title": "SnapRust - 跨平台截图与标注工具",
         "width": 1200,
         "height": 800,
@@ -579,13 +681,18 @@ jobs:
 
     const state = {
       isTauri: Boolean(window.__TAURI__ || window.__TAURI_INTERNALS__),
+      isSnippingMode: false, // Fullscreen region snipping mode flag
       currentTool: 'rect', // 'crop' | 'rect' | 'arrow' | 'mosaic' | 'text' | 'pen' | 'step' | 'picker'
       color: '#ef4444',
       strokeSize: 4,
       rectFilled: false,
-      mosaicBrushMode: true, // true = 涂抹画笔, false = 矩形区域马赛克
+      mosaicBrushMode: true,
       stepCounter: 1,
       isDrawing: false,
+      cropInteraction: null, // 'new' | 'move' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+      dragOffsetX: 0,
+      dragOffsetY: 0,
+      origCropRect: null,
       startX: 0,
       startY: 0,
       currX: 0,
@@ -598,7 +705,6 @@ jobs:
       activeCodeTab: 'main_rs'
     };
 
-    // Detect Tauri IPC invoke helper
     function tauriInvoke(cmd, args = {}) {
       if (window.__TAURI__) {
         if (typeof window.__TAURI__.invoke === 'function') {
@@ -643,7 +749,6 @@ jobs:
       mainCtx.save();
 
       if (sceneIdx % 2 === 0) {
-        // Scene 1: Modern Developer IDE + System Performance Dashboard + Sensitive Token Card
         const bgGrad = mainCtx.createLinearGradient(0, 0, w, h);
         bgGrad.addColorStop(0, '#0f172a');
         bgGrad.addColorStop(0.5, '#1e1b4b');
@@ -651,7 +756,6 @@ jobs:
         mainCtx.fillStyle = bgGrad;
         mainCtx.fillRect(0, 0, w, h);
 
-        // Top OS Menu Bar
         mainCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
         mainCtx.fillRect(0, 0, w, 28);
         mainCtx.fillStyle = '#94a3b8';
@@ -659,11 +763,9 @@ jobs:
         mainCtx.fillText('SnapRust OS   File   Edit   Selection   View   Window   Help', 16, 18);
         mainCtx.fillText('100%  Wi-Fi  Mon 14:32', w - 155, 18);
 
-        // Window 1: Code Editor Window
         drawRoundedRect(mainCtx, 48, 54, 620, 490, 12, '#0b1120', '#334155');
         mainCtx.fillStyle = '#1e293b';
         mainCtx.fillRect(49, 55, 618, 34);
-        // Window Traffic Lights
         [['#ef4444', 68], ['#f59e0b', 86], ['#22c55e', 104]].forEach(([c, cx]) => {
           mainCtx.beginPath();
           mainCtx.arc(cx, 72, 5.5, 0, Math.PI * 2);
@@ -676,10 +778,10 @@ jobs:
 
         const codeLines = [
           ['1', '#[tauri::command]', '#f97316'],
-          ['2', 'async fn capture_screen(monitor_id: Option<u32>) -> Result<CaptureResult, String> {', '#e2e8f0'],
-          ['3', '    let screens = screenshots::Screen::all().map_err(|e| e.to_string())?;', '#93c5fd'],
-          ['4', '    let target = screens.into_iter().next().ok_or("No screen")?;', '#93c5fd'],
-          ['5', '    let image = target.capture().map_err(|e| e.to_string())?;', '#34d399'],
+          ['2', 'async fn capture_screen(window: Window, hide_window: bool) -> Result<CaptureResult, String> {', '#e2e8f0'],
+          ['3', '    if hide_window { window.hide(); thread::sleep(Duration::from_millis(380)); }', '#34d399'],
+          ['4', '    let target = screenshots::Screen::all()?.into_iter().next().unwrap();', '#93c5fd'],
+          ['5', '    let image = target.capture().map_err(|e| e.to_string())?;', '#38bdf8'],
           ['6', '    // 隐私密钥示例 (可用马赛克工具涂抹打码测试):', '#64748b'],
           ['7', '    let api_secret = "sk-live-98a7f6b5c4d3e2f1-SECRET-KEY";', '#fca5a5'],
           ['8', '    let account_id = "user_admin@internal.corp.example";', '#fcd34d'],
@@ -695,7 +797,6 @@ jobs:
           mainCtx.fillText(code, 96, y);
         });
 
-        // Terminal Pane inside Editor
         mainCtx.fillStyle = '#070b14';
         mainCtx.fillRect(49, 410, 618, 133);
         mainCtx.fillStyle = '#38bdf8';
@@ -703,21 +804,19 @@ jobs:
         mainCtx.fillText('$ cargo tauri build --release', 68, 438);
         mainCtx.fillStyle = '#a7f3d0';
         mainCtx.font = '12px JetBrains Mono, monospace';
-        mainCtx.fillText('✓ Compiling screenshots v0.8.10 (Cross-platform display capture)', 68, 464);
+        mainCtx.fillText('✓ Window auto-hide (380ms DWM safe delay) + Fullscreen Region Snip enabled', 68, 464);
         mainCtx.fillText('✓ Compiling arboard v3.4.0 (Native OS clipboard integration)', 68, 488);
         mainCtx.fillStyle = '#fde047';
         mainCtx.fillText('✓ Finished release [optimized] target(s) in 4.18s (Binary size: 4.8 MB)', 68, 514);
 
-        // Window 2: Analytics & Bug Report Card on Right
         drawRoundedRect(mainCtx, 700, 74, 376, 460, 12, '#111827', '#374151');
         mainCtx.fillStyle = '#f8fafc';
         mainCtx.font = '700 15px Inter, sans-serif';
         mainCtx.fillText('跨平台抓屏性能监控面板', 724, 112);
         mainCtx.fillStyle = '#94a3b8';
         mainCtx.font = '12px Inter, sans-serif';
-        mainCtx.fillText('试用上方【矩形】【箭头】【马赛克】【文字】工具在此标注', 724, 134);
+        mainCtx.fillText('点击顶部【选区截图】即可隐藏自身并框选任意局部区域', 724, 134);
 
-        // Metric boxes
         const metrics = [
           ['抓屏耗时 (1080p)', '11.4 ms', '#22c55e'],
           ['内存占用 (Rust)', '18.2 MB', '#38bdf8'],
@@ -734,7 +833,6 @@ jobs:
           mainCtx.fillText(val, bx + 10, 208);
         });
 
-        // Simulated Chart Bars
         drawRoundedRect(mainCtx, 722, 248, 332, 160, 10, '#0f172a', '#1e293b');
         mainCtx.fillStyle = '#cbd5e1';
         mainCtx.font = '600 12px Inter, sans-serif';
@@ -755,7 +853,6 @@ jobs:
           mainCtx.fillRect(855, by, Math.round(180 * ratio), 14);
         });
 
-        // Sensitive Customer Info Box for Mosaic testing
         drawRoundedRect(mainCtx, 722, 424, 332, 90, 10, '#1e1b4b', '#4338ca');
         mainCtx.fillStyle = '#e0e7ff';
         mainCtx.font = '600 12px Inter, sans-serif';
@@ -765,7 +862,6 @@ jobs:
         mainCtx.fillText('手机号: 138-0013-8899 | 验证码: 849201', 736, 472);
         mainCtx.fillText('内网 IP: 192.168.42.108:8080', 736, 494);
       } else {
-        // Scene 2: Light UI Product Prototype & Map Dashboard
         const bgGrad = mainCtx.createLinearGradient(0, 0, w, h);
         bgGrad.addColorStop(0, '#e0f2fe');
         bgGrad.addColorStop(1, '#fef3c7');
@@ -778,7 +874,7 @@ jobs:
         mainCtx.fillText('订单与物流核验中心 — UI 走查标注示例屏', 105, 98);
         mainCtx.fillStyle = '#64748b';
         mainCtx.font = '13px Inter, sans-serif';
-        mainCtx.fillText('可使用【区域框选】裁剪任意局部，或使用【序号标尺】与【箭头】标记 UI 问题', 105, 122);
+        mainCtx.fillText('可使用【选区截图】裁剪任意局部，或使用【序号标尺】与【箭头】标记 UI 问题', 105, 122);
 
         const cards = [
           ['待发货订单', '1,284 单', '#0284c7', '#e0f2fe'],
@@ -796,7 +892,6 @@ jobs:
           mainCtx.fillText(count, cx + 20, 228);
         });
 
-        // Table rows
         drawRoundedRect(mainCtx, 105, 285, 890, 260, 12, '#f8fafc', '#e2e8f0');
         const rows = [
           ['运单号', '收件人 (测试打码)', '目的地网点', '当前状态'],
@@ -898,7 +993,102 @@ jobs:
     }
 
     // =========================================================================
-    // 5. Drawing Algorithms (Rectangle, Arrow, Real Pixel Mosaic, Pen, Step, Text)
+    // 5. Fullscreen Region Snipping Mode & Crop Handle Hit-Testing
+    // =========================================================================
+    async function enterFullscreenSnipUI() {
+      state.isSnippingMode = true;
+      selectTool('crop');
+      document.getElementById('appMainHeader').classList.add('hidden');
+      document.getElementById('annotationToolbar').classList.add('hidden');
+      document.getElementById('appMainFooter').classList.add('hidden');
+      const hud = document.getElementById('snipTopHud');
+      hud.classList.remove('hidden');
+      hud.classList.add('flex');
+      const vp = document.getElementById('canvasViewport');
+      vp.classList.remove('p-4');
+      vp.classList.add('p-0', 'bg-black');
+
+      // Draw initial dark mask over the whole screen so user immediately sees they are in snipping mode
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      overlayCtx.fillStyle = 'rgba(2, 6, 23, 0.45)';
+      overlayCtx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+
+    async function exitFullscreenSnipUI() {
+      state.isSnippingMode = false;
+      document.getElementById('appMainHeader').classList.remove('hidden');
+      document.getElementById('annotationToolbar').classList.remove('hidden');
+      document.getElementById('appMainFooter').classList.remove('hidden');
+      const hud = document.getElementById('snipTopHud');
+      hud.classList.add('hidden');
+      hud.classList.remove('flex');
+      const vp = document.getElementById('canvasViewport');
+      vp.classList.remove('p-0', 'bg-black');
+      vp.classList.add('p-4');
+
+      if (state.isTauri) {
+        try {
+          await tauriInvoke('set_snip_overlay_mode', { active: false });
+        } catch (e) {}
+      }
+    }
+
+    function getCropHandleAt(x, y, rect) {
+      if (!rect || rect.w < 8 || rect.h < 8) return null;
+      const tol = 10;
+      const handles = {
+        nw: [rect.x, rect.y],
+        n:  [rect.x + rect.w / 2, rect.y],
+        ne: [rect.x + rect.w, rect.y],
+        e:  [rect.x + rect.w, rect.y + rect.h / 2],
+        se: [rect.x + rect.w, rect.y + rect.h],
+        s:  [rect.x + rect.w / 2, rect.y + rect.h],
+        sw: [rect.x, rect.y + rect.h],
+        w:  [rect.x, rect.y + rect.h / 2]
+      };
+      for (const [name, [hx, hy]] of Object.entries(handles)) {
+        if (Math.abs(x - hx) <= tol && Math.abs(y - hy) <= tol) {
+          return name;
+        }
+      }
+      if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
+        return 'move';
+      }
+      return null;
+    }
+
+    function positionFloatingSnipBar(rect) {
+      const bar = document.getElementById('snipFloatingBar');
+      if (!rect || rect.w < 10 || rect.h < 10) {
+        bar.classList.add('hidden');
+        bar.classList.remove('flex');
+        return;
+      }
+      const canvasRect = overlayCanvas.getBoundingClientRect();
+      const scaleX = canvasRect.width / overlayCanvas.width;
+      const scaleY = canvasRect.height / overlayCanvas.height;
+
+      const cssRight = (rect.x + rect.w) * scaleX;
+      const cssBottom = (rect.y + rect.h) * scaleY;
+      const cssTop = rect.y * scaleY;
+
+      bar.classList.remove('hidden');
+      bar.classList.add('flex');
+
+      const barWidth = 390;
+      const barHeight = 42;
+      let leftPos = Math.max(8, Math.min(canvasRect.width - barWidth - 8, cssRight - barWidth));
+      let topPos = cssBottom + 10;
+      if (topPos + barHeight > canvasRect.height - 8) {
+        topPos = Math.max(8, cssTop - barHeight - 10);
+      }
+
+      bar.style.left = `${leftPos}px`;
+      bar.style.top = `${topPos}px`;
+    }
+
+    // =========================================================================
+    // 6. Drawing Algorithms (Rectangle, Arrow, Real Pixel Mosaic, Pen, Step, Text)
     // =========================================================================
     function getCanvasCoordinates(evt) {
       const rect = overlayCanvas.getBoundingClientRect();
@@ -950,7 +1140,6 @@ jobs:
       ctx.shadowColor = 'rgba(0,0,0,0.4)';
       ctx.shadowBlur = 4;
 
-      // Shaft line ending slightly inside the arrow head so the tip stays sharp
       const shaftEndX = x2 - Math.cos(angle) * (headLength * 0.65);
       const shaftEndY = y2 - Math.sin(angle) * (headLength * 0.65);
 
@@ -959,7 +1148,6 @@ jobs:
       ctx.lineTo(shaftEndX, shaftEndY);
       ctx.stroke();
 
-      // Arrowhead polygon
       ctx.beginPath();
       ctx.moveTo(x2, y2);
       ctx.lineTo(
@@ -979,7 +1167,6 @@ jobs:
       ctx.restore();
     }
 
-    // Real Pixelation Mosaic on Rectangular Area of mainCanvas
     function pixelateRegionOnMainCanvas(x, y, w, h, blockSize) {
       const bx = Math.max(0, Math.floor(Math.min(x, x + w)));
       const by = Math.max(0, Math.floor(Math.min(y, y + h)));
@@ -1047,9 +1234,32 @@ jobs:
       ctx.restore();
     }
 
-    function drawCropOverlay(rect) {
+    function drawCropOverlay(rect, cursorPos = null) {
       overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-      if (!rect || rect.w < 4 || rect.h < 4) return;
+
+      // If in snipping mode and no selection rect yet, show dimmed mask + crosshair + magnifier
+      if (!rect || rect.w < 4 || rect.h < 4) {
+        if (state.isSnippingMode || state.currentTool === 'crop') {
+          overlayCtx.save();
+          overlayCtx.fillStyle = 'rgba(2, 6, 23, 0.45)';
+          overlayCtx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          if (cursorPos) {
+            overlayCtx.strokeStyle = 'rgba(249, 115, 22, 0.75)';
+            overlayCtx.lineWidth = 1;
+            overlayCtx.setLineDash([4, 4]);
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(0, cursorPos.y);
+            overlayCtx.lineTo(overlayCanvas.width, cursorPos.y);
+            overlayCtx.moveTo(cursorPos.x, 0);
+            overlayCtx.lineTo(cursorPos.x, overlayCanvas.height);
+            overlayCtx.stroke();
+            overlayCtx.setLineDash([]);
+            drawColorPickerLoupe(cursorPos.x, cursorPos.y, false);
+          }
+          overlayCtx.restore();
+        }
+        return;
+      }
 
       overlayCtx.save();
       // Dim outside area
@@ -1057,7 +1267,7 @@ jobs:
       overlayCtx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
       overlayCtx.clearRect(rect.x, rect.y, rect.w, rect.h);
 
-      // Dashed orange border
+      // Crisp border
       overlayCtx.strokeStyle = '#f97316';
       overlayCtx.lineWidth = 2;
       overlayCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
@@ -1077,7 +1287,7 @@ jobs:
       overlayCtx.stroke();
 
       // 8 Resize Handles
-      const handleSize = 7;
+      const handleSize = 8;
       const pts = [
         [rect.x, rect.y],
         [rect.x + rect.w / 2, rect.y],
@@ -1108,23 +1318,24 @@ jobs:
       overlayCtx.restore();
     }
 
-    function drawColorPickerLoupe(x, y) {
-      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    function drawColorPickerLoupe(x, y, clearFirst = true) {
+      if (clearFirst) {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      }
       const pixel = mainCtx.getImageData(x, y, 1, 1).data;
       const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
       document.getElementById('pickedColorSwatch').style.backgroundColor = hex;
       document.getElementById('pickedColorHex').textContent = `${hex} (${pixel[0]},${pixel[1]},${pixel[2]})`;
 
-      const radius = 48;
-      const lx = Math.min(overlayCanvas.width - radius - 14, Math.max(radius + 14, x + 58));
-      const ly = Math.min(overlayCanvas.height - radius - 14, Math.max(radius + 14, y - 58));
+      const radius = 46;
+      const lx = Math.min(overlayCanvas.width - radius - 14, Math.max(radius + 14, x + 56));
+      const ly = Math.min(overlayCanvas.height - radius - 14, Math.max(radius + 14, y - 56));
 
       overlayCtx.save();
       overlayCtx.beginPath();
       overlayCtx.arc(lx, ly, radius, 0, Math.PI * 2);
       overlayCtx.clip();
 
-      // Draw zoomed 9x9 pixel grid
       const gridCount = 9;
       const cellSize = (radius * 2) / gridCount;
       const half = Math.floor(gridCount / 2);
@@ -1144,7 +1355,6 @@ jobs:
         }
       }
 
-      // Center pixel highlight
       overlayCtx.strokeStyle = '#f97316';
       overlayCtx.lineWidth = 2;
       overlayCtx.strokeRect(
@@ -1155,7 +1365,6 @@ jobs:
       );
       overlayCtx.restore();
 
-      // Outer ring
       overlayCtx.save();
       overlayCtx.beginPath();
       overlayCtx.arc(lx, ly, radius, 0, Math.PI * 2);
@@ -1166,16 +1375,35 @@ jobs:
     }
 
     // =========================================================================
-    // 6. Pointer Events on Overlay Canvas
+    // 7. Pointer Events on Overlay Canvas (Supports Moving & Resizing Selection)
     // =========================================================================
     overlayCanvas.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 && e.pointerType === 'mouse') return;
       const pos = getCanvasCoordinates(e);
-      state.isDrawing = true;
       state.startX = pos.x;
       state.startY = pos.y;
       state.currX = pos.x;
       state.currY = pos.y;
+
+      if (state.currentTool === 'crop' || state.isSnippingMode) {
+        state.isDrawing = true;
+        document.getElementById('snipFloatingBar').classList.add('hidden');
+        document.getElementById('snipFloatingBar').classList.remove('flex');
+
+        const hit = getCropHandleAt(pos.x, pos.y, state.cropRect);
+        if (hit && state.cropRect) {
+          state.cropInteraction = hit;
+          state.origCropRect = { ...state.cropRect };
+          state.dragOffsetX = pos.x - state.cropRect.x;
+          state.dragOffsetY = pos.y - state.cropRect.y;
+        } else {
+          state.cropInteraction = 'new';
+          state.cropRect = { x: pos.x, y: pos.y, w: 0, h: 0 };
+        }
+        return;
+      }
+
+      state.isDrawing = true;
 
       if (state.currentTool === 'text') {
         state.isDrawing = false;
@@ -1227,20 +1455,56 @@ jobs:
         return;
       }
 
+      if ((state.currentTool === 'crop' || state.isSnippingMode) && !state.isDrawing) {
+        if (!state.cropRect || state.cropRect.w < 5) {
+          drawCropOverlay(null, pos);
+        } else {
+          const hit = getCropHandleAt(pos.x, pos.y, state.cropRect);
+          const cursorMap = {
+            nw: 'nwse-resize', se: 'nwse-resize',
+            ne: 'nesw-resize', sw: 'nesw-resize',
+            n: 'ns-resize', s: 'ns-resize',
+            e: 'ew-resize', w: 'ew-resize',
+            move: 'move'
+          };
+          overlayCanvas.style.cursor = cursorMap[hit] || 'crosshair';
+        }
+        return;
+      }
+
       if (!state.isDrawing) return;
       state.currX = pos.x;
       state.currY = pos.y;
 
-      if (state.currentTool === 'crop') {
-        const rx = Math.min(state.startX, pos.x);
-        const ry = Math.min(state.startY, pos.y);
-        const rw = Math.abs(pos.x - state.startX);
-        const rh = Math.abs(pos.y - state.startY);
-        state.cropRect = { x: rx, y: ry, w: rw, h: rh };
-        drawCropOverlay(state.cropRect);
+      if (state.currentTool === 'crop' || state.isSnippingMode) {
+        const mode = state.cropInteraction || 'new';
+        if (mode === 'new') {
+          const rx = Math.min(state.startX, pos.x);
+          const ry = Math.min(state.startY, pos.y);
+          const rw = Math.abs(pos.x - state.startX);
+          const rh = Math.abs(pos.y - state.startY);
+          state.cropRect = { x: rx, y: ry, w: rw, h: rh };
+        } else if (mode === 'move' && state.origCropRect) {
+          const nw = state.origCropRect.w;
+          const nh = state.origCropRect.h;
+          const nx = Math.max(0, Math.min(overlayCanvas.width - nw, pos.x - state.dragOffsetX));
+          const ny = Math.max(0, Math.min(overlayCanvas.height - nh, pos.y - state.dragOffsetY));
+          state.cropRect = { x: nx, y: ny, w: nw, h: nh };
+        } else if (state.origCropRect) {
+          let { x, y, w, h } = state.origCropRect;
+          let x2 = x + w;
+          let y2 = y + h;
+          if (mode.includes('w')) x = Math.min(pos.x, x2 - 10);
+          if (mode.includes('e')) x2 = Math.max(pos.x, x + 10);
+          if (mode.includes('n')) y = Math.min(pos.y, y2 - 10);
+          if (mode.includes('s')) y2 = Math.max(pos.y, y + 10);
+          state.cropRect = { x, y, w: x2 - x, h: y2 - y };
+        }
+
+        drawCropOverlay(state.cropRect, pos);
         const selInfo = document.getElementById('statusSelectionInfo');
         selInfo.classList.remove('hidden');
-        selInfo.textContent = `选区: ${rw} × ${rh} px`;
+        selInfo.textContent = `选区: ${Math.round(state.cropRect.w)} × ${Math.round(state.cropRect.h)} px`;
         document.getElementById('cropActionGroup').classList.remove('hidden');
         document.getElementById('cropActionGroup').classList.add('flex');
       } else if (state.currentTool === 'rect') {
@@ -1281,6 +1545,17 @@ jobs:
       if (!state.isDrawing) return;
       state.isDrawing = false;
 
+      if (state.currentTool === 'crop' || state.isSnippingMode) {
+        if (state.cropRect && state.cropRect.w >= 10 && state.cropRect.h >= 10) {
+          drawCropOverlay(state.cropRect);
+          positionFloatingSnipBar(state.cropRect);
+        } else {
+          state.cropRect = null;
+          drawCropOverlay(null);
+        }
+        return;
+      }
+
       if (state.currentTool === 'rect') {
         overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         if (Math.abs(state.currX - state.startX) > 3 && Math.abs(state.currY - state.startY) > 3) {
@@ -1314,8 +1589,16 @@ jobs:
       }
     });
 
+    // Double-click inside crop selection immediately confirms crop!
+    overlayCanvas.addEventListener('dblclick', (e) => {
+      if ((state.currentTool === 'crop' || state.isSnippingMode) && state.cropRect && state.cropRect.w >= 10) {
+        e.preventDefault();
+        applyCropSelection();
+      }
+    });
+
     // =========================================================================
-    // 7. Floating Text Annotation Editor
+    // 8. Floating Text Annotation Editor
     // =========================================================================
     function openFloatingTextEditor(canvasX, canvasY) {
       state.pendingTextPos = { x: canvasX, y: canvasY };
@@ -1325,8 +1608,8 @@ jobs:
       const cssX = (canvasX / overlayCanvas.width) * rect.width;
       const cssY = (canvasY / overlayCanvas.height) * rect.height;
 
-      editor.style.left = `${Math.min( Math.max(8, cssX), Math.max(8, rect.width - 260) )}px`;
-      editor.style.top = `${Math.min( Math.max(8, cssY), Math.max(8, rect.height - 110) )}px`;
+      editor.style.left = `${Math.min(Math.max(8, cssX), Math.max(8, rect.width - 260))}px`;
+      editor.style.top = `${Math.min(Math.max(8, cssY), Math.max(8, rect.height - 110))}px`;
       editor.classList.remove('hidden');
       input.value = '';
       setTimeout(() => input.focus(), 20);
@@ -1388,51 +1671,103 @@ jobs:
     });
 
     // =========================================================================
-    // 8. Region Crop Execution
+    // 9. Region Crop Execution & Floating Bar Wiring
     // =========================================================================
-    function applyCropSelection() {
+    async function applyCropSelection() {
       if (!state.cropRect || state.cropRect.w < 10 || state.cropRect.h < 10) {
-        showToast('请先拖拽框选有效的截图区域', 'info');
+        showToast('请先按住鼠标左键拖拽框选截图区域', 'info');
         return;
       }
-      const { x, y, w, h } = state.cropRect;
-      const croppedData = mainCtx.getImageData(x, y, w, h);
-      mainCanvas.width = w;
-      mainCanvas.height = h;
-      overlayCanvas.width = w;
-      overlayCanvas.height = h;
+      const rx = Math.round(state.cropRect.x);
+      const ry = Math.round(state.cropRect.y);
+      const rw = Math.round(state.cropRect.w);
+      const rh = Math.round(state.cropRect.h);
+
+      const croppedData = mainCtx.getImageData(rx, ry, rw, rh);
+      mainCanvas.width = rw;
+      mainCanvas.height = rh;
+      overlayCanvas.width = rw;
+      overlayCanvas.height = rh;
       mainCtx.putImageData(croppedData, 0, 0);
+
       clearCropSelection();
+      if (state.isSnippingMode) {
+        await exitFullscreenSnipUI();
+      }
       pushHistory();
       selectTool('rect');
-      showToast(`已裁剪为 ${w} × ${h} px`);
+      showToast(`已成功截取选区 (${rw} × ${rh} px)，可继续添加矩形/箭头/马赛克/文字标注`);
     }
 
     function clearCropSelection() {
       state.cropRect = null;
+      state.cropInteraction = null;
+      overlayCanvas.style.cursor = 'crosshair';
       overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
       document.getElementById('statusSelectionInfo').classList.add('hidden');
       document.getElementById('cropActionGroup').classList.add('hidden');
       document.getElementById('cropActionGroup').classList.remove('flex');
+      document.getElementById('snipFloatingBar').classList.add('hidden');
+      document.getElementById('snipFloatingBar').classList.remove('flex');
     }
 
     document.getElementById('btnApplyCrop').addEventListener('click', applyCropSelection);
-    document.getElementById('btnCancelCrop').addEventListener('click', clearCropSelection);
+    document.getElementById('btnCancelCrop').addEventListener('click', async () => {
+      clearCropSelection();
+      if (state.isSnippingMode) {
+        await exitFullscreenSnipUI();
+      }
+    });
+
+    // Floating Snip Bar buttons
+    document.getElementById('btnSnipConfirm').addEventListener('click', applyCropSelection);
+    document.getElementById('btnSnipCopyNow').addEventListener('click', async () => {
+      await applyCropSelection();
+      document.getElementById('btnCopyClipboard').click();
+    });
+    document.getElementById('btnSnipSaveNow').addEventListener('click', async () => {
+      await applyCropSelection();
+      document.getElementById('btnExportPng').click();
+    });
+    document.getElementById('btnSnipResetSel').addEventListener('click', () => {
+      clearCropSelection();
+      if (state.isSnippingMode) {
+        drawCropOverlay(null);
+      }
+    });
+    document.getElementById('btnSnipCancel').addEventListener('click', async () => {
+      clearCropSelection();
+      if (state.isSnippingMode) {
+        await exitFullscreenSnipUI();
+      }
+    });
+    document.getElementById('btnHudExitSnip').addEventListener('click', async () => {
+      clearCropSelection();
+      await exitFullscreenSnipUI();
+    });
 
     // =========================================================================
-    // 9. Screen Capture (Tauri Rust `screenshots` + Browser `getDisplayMedia` Fallback)
+    // 10. Screen Capture (Region Snip vs Fullscreen Capture, Hiding Window First)
     // =========================================================================
-    async function triggerScreenCapture() {
+    async function triggerScreenCapture(enterRegionSnip = false) {
       const monitorId = parseInt(document.getElementById('monitorSelect').value, 10);
-      const hideWindow = document.getElementById('hideWindowToggle').checked;
+      // Always hide software window during region snip so software never blocks the screen
+      const hideWindow = enterRegionSnip ? true : document.getElementById('hideWindowToggle').checked;
 
       // 1. Try Tauri Rust Backend first
       if (state.isTauri) {
         try {
-          showToast('正在通过 Rust screenshots 捕获屏幕...', 'info');
-          const res = await tauriInvoke('capture_screen', { monitorId, hideWindow });
+          const res = await tauriInvoke('capture_screen', {
+            monitorId,
+            hideWindow,
+            enterSnipMode: enterRegionSnip
+          });
           await loadDataUrlToCanvas(res.base64_png);
-          showToast(`捕获成功 (${res.width} × ${res.height} px)`);
+          if (enterRegionSnip) {
+            await enterFullscreenSnipUI();
+          } else {
+            showToast(`全屏捕获成功 (${res.width} × ${res.height} px)`);
+          }
           return;
         } catch (err) {
           showToast('Tauri 抓屏调用失败: ' + err.message, 'error');
@@ -1462,27 +1797,37 @@ jobs:
           stream.getTracks().forEach(t => t.stop());
           clearCropSelection();
           pushHistory();
-          showToast(`已捕获真实屏幕画面 (${vw} × ${vh} px)`);
+
+          if (enterRegionSnip) {
+            await enterFullscreenSnipUI();
+            showToast('请直接在画面上按住左键拖拽框选截图区域！', 'info');
+          } else {
+            showToast(`已捕获屏幕画面 (${vw} × ${vh} px)`);
+          }
           return;
         } catch (err) {
-          // In sandboxed iframe or user cancelled: smoothly switch to simulated screen capture
-          state.sceneIndex++;
           mainCanvas.width = 1120;
           mainCanvas.height = 630;
           overlayCanvas.width = 1120;
           overlayCanvas.height = 630;
           renderSimulatedDesktop(state.sceneIndex);
           pushHistory();
-          showToast('已捕获高分屏示例桌面（本地运行 Tauri 或独立打开网页即可抓取真实系统屏幕）', 'info');
+          if (enterRegionSnip) {
+            await enterFullscreenSnipUI();
+            showToast('已进入全屏选区框选模式：请按住鼠标左键拖拽框选区域', 'info');
+          } else {
+            showToast('已捕获高分屏示例桌面', 'info');
+          }
           return;
         }
       }
 
-      // 3. Fallback if getDisplayMedia unavailable
-      state.sceneIndex++;
+      // 3. Fallback
       renderSimulatedDesktop(state.sceneIndex);
       pushHistory();
-      showToast('已刷新示例桌面截图', 'info');
+      if (enterRegionSnip) {
+        await enterFullscreenSnipUI();
+      }
     }
 
     function loadDataUrlToCanvas(dataUrl) {
@@ -1504,10 +1849,10 @@ jobs:
     }
 
     // =========================================================================
-    // 10. Toolbar & Export Wiring
+    // 11. Toolbar & Export Wiring
     // =========================================================================
     const TOOL_HINTS = {
-      crop: '当前工具：区域框选 — 拖拽框选区域后点击顶部“裁剪选区”即可裁切图像',
+      crop: '当前工具：区域框选 — 按住左键拖拽框选区域，支持拖拽手柄微调，双击选区或点击“确认选区”完成裁剪',
       rect: '当前工具：矩形标注 — 拖拽绘制矩形框，可切换空心边框或半透明高亮填充',
       arrow: '当前工具：箭头标注 — 按住拖拽绘制指向箭头，箭头大小随粗细自动缩放',
       mosaic: '当前工具：马赛克打码 — 支持画笔涂抹打码或框选矩形打码，真实像素格化处理',
@@ -1541,6 +1886,8 @@ jobs:
 
       if (toolName !== 'crop') {
         clearCropSelection();
+      } else {
+        drawCropOverlay(state.cropRect);
       }
     }
 
@@ -1580,7 +1927,10 @@ jobs:
       document.getElementById('strokeSizeValue').textContent = `${state.strokeSize}px`;
     });
 
-    document.getElementById('btnCaptureScreen').addEventListener('click', triggerScreenCapture);
+    // Primary Region Snip vs Fullscreen Capture buttons
+    document.getElementById('btnRegionSnip').addEventListener('click', () => triggerScreenCapture(true));
+    document.getElementById('btnCaptureScreen').addEventListener('click', () => triggerScreenCapture(false));
+
     document.getElementById('btnSwitchScene').addEventListener('click', () => {
       state.sceneIndex++;
       mainCanvas.width = 1120;
@@ -1617,7 +1967,6 @@ jobs:
       }
     });
 
-    // Copy Image to Clipboard (Tauri native + Browser Clipboard API + Base64 fallback)
     document.getElementById('btnCopyClipboard').addEventListener('click', async () => {
       const dataUrl = getExportDataUrl();
       if (state.isTauri) {
@@ -1625,9 +1974,7 @@ jobs:
           await tauriInvoke('copy_image_to_clipboard', { base64Png: dataUrl });
           showToast('已通过 Rust arboard 写入系统剪贴板！');
           return;
-        } catch (err) {
-          // continue to web clipboard fallback
-        }
+        } catch (err) {}
       }
 
       try {
@@ -1637,14 +1984,11 @@ jobs:
           showToast('截图已复制到剪贴板，可直接 Ctrl+V 粘贴！');
           return;
         }
-      } catch (e) {
-        // Fallback when iframe blocks image clipboard
-      }
+      } catch (e) {}
       copyTextSafe(dataUrl);
       showToast('已复制图像 Base64 数据流到剪贴板');
     });
 
-    // Save PNG
     document.getElementById('btnExportPng').addEventListener('click', () => {
       const dataUrl = getExportDataUrl();
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -1661,20 +2005,20 @@ jobs:
     function getExportDataUrl() {
       if (state.cropRect && state.cropRect.w > 10 && state.cropRect.h > 10) {
         const temp = document.createElement('canvas');
-        temp.width = state.cropRect.w;
-        temp.height = state.cropRect.h;
+        temp.width = Math.round(state.cropRect.w);
+        temp.height = Math.round(state.cropRect.h);
         const tCtx = temp.getContext('2d');
         tCtx.drawImage(
           mainCanvas,
-          state.cropRect.x, state.cropRect.y, state.cropRect.w, state.cropRect.h,
-          0, 0, state.cropRect.w, state.cropRect.h
+          Math.round(state.cropRect.x), Math.round(state.cropRect.y),
+          Math.round(state.cropRect.w), Math.round(state.cropRect.h),
+          0, 0, Math.round(state.cropRect.w), Math.round(state.cropRect.h)
         );
         return temp.toDataURL('image/png');
       }
       return mainCanvas.toDataURL('image/png');
     }
 
-    // Paste image from clipboard directly (Ctrl+V)
     window.addEventListener('paste', (e) => {
       if (!e.clipboardData) return;
       const items = e.clipboardData.items;
@@ -1692,9 +2036,29 @@ jobs:
       }
     });
 
-    // Keyboard Shortcuts
-    window.addEventListener('keydown', (e) => {
+    // Keyboard Shortcuts (Enter to confirm crop, Esc to cancel snipping, F1 to start region snip)
+    window.addEventListener('keydown', async (e) => {
       if (document.activeElement === document.getElementById('floatingTextInput')) return;
+
+      if (e.key === 'Enter' && (state.currentTool === 'crop' || state.isSnippingMode) && state.cropRect && state.cropRect.w >= 10) {
+        e.preventDefault();
+        await applyCropSelection();
+        return;
+      }
+      if (e.key === 'Escape' && (state.currentTool === 'crop' || state.isSnippingMode)) {
+        e.preventDefault();
+        clearCropSelection();
+        if (state.isSnippingMode) {
+          await exitFullscreenSnipUI();
+        }
+        return;
+      }
+      if (e.key === 'F1') {
+        e.preventDefault();
+        triggerScreenCapture(true);
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         undoAction();
@@ -1721,7 +2085,7 @@ jobs:
     });
 
     // =========================================================================
-    // 11. Workspace vs Source Code View Switching
+    // 12. Workspace vs Source Code View Switching
     // =========================================================================
     function switchMainView(view) {
       const ws = document.getElementById('workspaceView');
@@ -1766,7 +2130,7 @@ jobs:
     });
 
     // =========================================================================
-    // 12. Utility Functions & Initialization
+    // 13. Utility Functions & Initialization
     // =========================================================================
     function hexToRgba(hex, alpha) {
       const clean = hex.replace('#', '');
